@@ -247,8 +247,8 @@
 
       <div class="modes" role="group" aria-label="对局模式">
         <button class="mode-btn" id="modeOnline" type="button" aria-pressed="true">
-          <span class="t">联机房间 · 三人 + 机器人</span>
-          <span class="d">开个房间把房间码发给两位朋友，各自在自己手机上打，机器人补北家</span>
+          <span class="t">联机房间 · 1～3 人都行</span>
+          <span class="d">开个房间把房间码发给朋友，各自在自己手机上打；人不够时空位由机器人补，一个人也能开局</span>
         </button>
         <button class="mode-btn" id="modeSolo" type="button" aria-pressed="false">
           <span class="t">单人练习</span>
@@ -269,7 +269,7 @@
         </div>
         <div class="codebox" id="codeBox">
           <span class="code" id="roomCodeText"></span>
-          <span class="hint">把这个房间码发给两位朋友（微信发过去就行），<br />他们在这页输入房间码就能进来。</span>
+          <span class="hint">把这个房间码发给朋友（微信发过去就行），<br />他们在这页输入房间码就能进来；没到齐也能先开局。</span>
         </div>
         <div class="lobby" id="lobbyBox">
           <div class="seats" id="lobbySeats"></div>
@@ -278,7 +278,7 @@
             <button class="btn" id="leaveBtn" type="button">离开房间</button>
           </div>
         </div>
-        <p class="netstatus" id="netStatus">联机是手机之间直接连的：一位朋友创建房间，另外两位输码加入，凑齐三人后由房主点「开始游戏」。</p>
+        <p class="netstatus" id="netStatus">联机是手机之间直接连的：一位朋友创建房间，其他人输码加入。房主随时可以点「开始游戏」——一个人、两个人、三个人都行，空位由机器人补。</p>
       </div>
 
       <div class="table" id="table">
@@ -332,7 +332,7 @@
         </ul>
       </div>
 
-      <p class="foot">联机玩法：一人点「创建房间」，把 5 位房间码发给另外两位朋友；朋友打开这一页、填好名字、输入房间码点「加入房间」。三人到齐后房主点「开始游戏」，北家由机器人自动打。打牌时每人只能看到自己的手牌；网络闪断几秒不会被当成掉线。谁真掉线了，他的位置先由机器人接管，本人重新输入房间码、用原来的名字加入，就能回到自己的座位接着打。</p>
+      <p class="foot">联机玩法：一人点「创建房间」，把 5 位房间码发给朋友；朋友打开这一页、填好名字、输入房间码点「加入房间」。房主随时可以点「开始游戏」：三人到齐是 3 人 + 1 机器人，只来一位朋友是 2 人 + 2 机器人，没人来你也可以一个人 + 3 机器人开局，空位都由机器人补。开局后朋友才赶到也没关系，输码加入就能顶下机器人的位置接着打。打牌时每人只能看到自己的手牌；网络闪断几秒不会被当成掉线。谁真掉线了，他的位置先由机器人接管，本人重新输入房间码、用原来的名字加入，就能回到自己的座位接着打。</p>
     </div>
 
     <!-- round end overlay -->
@@ -688,7 +688,7 @@ function newHand(){
     players.push({
       seat: s,
       name: mode === "solo" ? SOLO_NAMES[s]
-        : (lobbyNames[s] || "等待加入…") + (botSeats[s] ? "（机器人代打）" : ""),
+        : (lobbyNames[s] || "等待加入…") + (botSeats[s] && !fillBots[s] ? "（机器人代打）" : ""),
       isBot: isBotSeat(s),
       hand: hand,
       finished: 0
@@ -905,7 +905,7 @@ function render(){
       ? "桌面最大：" + players[currentPlay.seat].name + " 的" + currentPlay.combo.label
       : "新的一轮，等 " + players[turn].name + " 出牌";
   } else if (mode === "online" && netRole !== "guest" && !gameStarted){
-    $("centerNote").textContent = "创建房间，把房间码发给两位朋友；北家由机器人补位";
+    $("centerNote").textContent = "创建房间，把房间码发给朋友；没到齐也能开局，空位由机器人补";
   } else if (mode === "online" && netRole === "guest" && !gameStarted){
     $("centerNote").textContent = "已加入房间，等房主开始游戏";
   } else {
@@ -1195,7 +1195,7 @@ function setMode(m){
     handActive = false;
     gameStarted = false;
     placeholderPlayers();
-    setLog("联机模式：创建房间或输入房间码加入，和两位朋友一起打，机器人补北家。");
+    setLog("联机模式：创建房间或输入房间码加入朋友的房间；一个人、两个人、三个人都能开局，空位机器人补。");
     render();
   }
 }
@@ -1214,6 +1214,8 @@ var guestConns = {};       // host side: seat -> connection
 var lobbyNames = [null, null, BOT_NAME, null];
 var seatTaken = [false, false, true, false];
 var botSeats = {};         // seats taken over by the robot after a drop
+var fillBots = {};         // seats the host chose to fill with a robot at start (1, 2 or 3 humans all OK)
+var BOT_FILL_NAMES = { 1: "东东", 3: "西西" }; // names for robot-filled seats (seat 2 is 掼掼)
 var gameStarted = false;
 var createTries = 0;
 
@@ -1273,12 +1275,13 @@ function renderLobby(){
     var full = s === 2 || !!lobbyNames[s];
     span.className = "lseat" + (full ? " full" : "");
     span.innerHTML = "<span class='tag'>" + SEAT_TAGS[s] + "</span> " +
-      (s === 2 ? BOT_NAME : (lobbyNames[s] ? escapeHtml(lobbyNames[s]) : "等待加入…"));
+      (s === 2 ? BOT_NAME : (lobbyNames[s] ? escapeHtml(lobbyNames[s]) : "空位 · 机器人补"));
     box.appendChild(span);
   }
-  var ready = seatTaken[1] && seatTaken[3];
-  $("startBtn").disabled = !(netRole === "host" && ready && !gameStarted);
-  $("startBtn").textContent = gameStarted ? "已开局" : (ready ? "开始游戏" : "等人到齐…");
+  var humans = 1 + (seatTaken[1] ? 1 : 0) + (seatTaken[3] ? 1 : 0);
+  $("startBtn").disabled = !(netRole === "host" && !gameStarted);
+  $("startBtn").textContent = gameStarted ? "已开局"
+    : "开始游戏（" + humans + " 人 + " + (4 - humans) + " 个机器人）";
 }
 function escapeHtml(s){
   return String(s).replace(/[&<>"']/g, function(ch){
@@ -1325,7 +1328,7 @@ function createRoom(){
     showInRoomUI();
     placeholderPlayers();
     render();
-    netStatus("房间建好了。把房间码 <b>" + roomCode + "</b> 发给两位朋友，他们输码加入，三人到齐后你点「开始游戏」。北家是机器人<b>" + BOT_NAME + "</b>，你的对家。");
+    netStatus("房间建好了。把房间码 <b>" + roomCode + "</b> 发给朋友，他们输码加入。等朋友到齐再开也行，马上开也行——空着的位置机器人补：你一个人、两个人、三个人都能玩。北家是机器人<b>" + BOT_NAME + "</b>，你的对家。");
   });
   peer.on("connection", onGuestConnection);
   peer.on("disconnected", function(){
@@ -1367,7 +1370,7 @@ function onGuestConnection(conn){
         var backName = sanitizeName(d.name) || "玩家";
         var reclaim = 0;
         [1, 3].forEach(function(s){
-          if (!reclaim && botSeats[s] && !guestConns[s] && lobbyNames[s] === backName) reclaim = s;
+          if (!reclaim && botSeats[s] && !guestConns[s] && (fillBots[s] || lobbyNames[s] === backName)) reclaim = s;
         });
         if (!reclaim){
           try { conn.send({ type: "reject", reason: "这一局已经开始了，等这场打完再来。" }); } catch (e) {}
@@ -1376,14 +1379,26 @@ function onGuestConnection(conn){
         assigned = reclaim;
         guestConns[reclaim] = conn;
         delete botSeats[reclaim];
+        var tookFillSeat = !!fillBots[reclaim];
+        if (tookFillSeat){
+          // this seat was robot-filled at start: a friend arriving late
+          // takes it over and plays it as their own from here on
+          delete fillBots[reclaim];
+          seatTaken[reclaim] = true;
+          lobbyNames[reclaim] = backName;
+        }
         if (players[reclaim]){
           players[reclaim].isBot = false;
           players[reclaim].name = lobbyNames[reclaim];
         }
-        setLog("<b>" + escapeHtml(backName) + "</b> 重新连上了，机器人把座位还给他了。");
+        setLog(tookFillSeat
+          ? "<b>" + escapeHtml(backName) + "</b> 加入了，顶下了机器人的位置接着打。"
+          : "<b>" + escapeHtml(backName) + "</b> 重新连上了，机器人把座位还给他了。");
         renderLobby();
         render();
-        netStatus("<b>" + escapeHtml(backName) + "</b> 重新连上了，回到自己的座位继续打。");
+        netStatus(tookFillSeat
+          ? "<b>" + escapeHtml(backName) + "</b> 加入了，顶下机器人的位置继续打。"
+          : "<b>" + escapeHtml(backName) + "</b> 重新连上了，回到自己的座位继续打。");
         return;
       }
       var seat = !seatTaken[1] ? 1 : (!seatTaken[3] ? 3 : 0);
@@ -1399,7 +1414,7 @@ function onGuestConnection(conn){
       renderLobby();
       broadcastState();
       netStatus("<b>" + escapeHtml(lobbyNames[seat]) + "</b> 加入了房间（" + SEAT_TAGS[seat] + "）。" +
-        (seatTaken[1] && seatTaken[3] ? "人到齐了，点「开始游戏」开打！" : "还差一位朋友。"));
+        (seatTaken[1] && seatTaken[3] ? "人到齐了，点「开始游戏」开打！" : "还差一位朋友；不等了也可以直接开始，空位机器人补。"));
       return;
     }
     if (d.type === "action" && assigned){
@@ -1678,6 +1693,7 @@ function leaveRoom(silent){
   netRole = null;
   gameStarted = false;
   botSeats = {};
+  fillBots = {};
   seatTaken = [false, false, true, false];
   lobbyNames = [null, null, BOT_NAME, null];
   roomCode = "";
@@ -1700,17 +1716,29 @@ $("joinBtn").addEventListener("click", joinRoom);
 $("leaveBtn").addEventListener("click", function(){ leaveRoom(false); });
 $("startBtn").addEventListener("click", function(){
   if (netRole !== "host" || gameStarted) return;
-  if (!(seatTaken[1] && seatTaken[3])) return;
   gameStarted = true;
   botSeats = {};
+  fillBots = {};
+  // Any seat no friend has taken is filled by a robot, so the host can
+  // start with 3 humans, 2 humans, or entirely on their own.
+  [1, 3].forEach(function(s){
+    if (!seatTaken[s]){
+      fillBots[s] = true;
+      botSeats[s] = true;
+      lobbyNames[s] = BOT_FILL_NAMES[s];
+    }
+  });
   renderLobby();
-  netStatus("开局了！祝好运。");
+  var humans = 1 + (seatTaken[1] ? 1 : 0) + (seatTaken[3] ? 1 : 0);
+  netStatus(humans === 3
+    ? "开局了！祝好运。"
+    : "开局了！" + humans + " 位真人 + " + (4 - humans) + " 个机器人补位。祝好运。");
   newMatch();
 });
 
 /* ================= init ================= */
 placeholderPlayers();
-setLog("联机模式：创建房间或输入房间码加入，和两位朋友一起打，机器人补北家。");
+setLog("联机模式：创建房间或输入房间码加入朋友的房间；一个人、两个人、三个人都能开局，空位机器人补。");
 render();
 </script>
   </body>
