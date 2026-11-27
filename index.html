@@ -320,7 +320,7 @@
         </ul>
         <h3>牌型</h3>
         <ul>
-          <li>单张、对子、三张、三带二、顺子（5 张起）、连对（3 对起）、钢板（2 个连续三张起）。</li>
+          <li>单张、对子、三张、三带二、顺子（5 张起）、连对（正好 3 对）、钢板（2 个连续三张起）。</li>
           <li>炸弹：4 张以上同点；同花顺按 5 张炸弹算，大于 5 张炸弹、小于 6 张炸弹；四张王是「四大天王」，最大。</li>
           <li>管牌必须同牌型、同长度比大小；炸弹可以管任何普通牌型。</li>
         </ul>
@@ -425,11 +425,12 @@ function analyze(cards){
   // sequences need faces; jokers can never join
   var hasJokerCard = nw.some(function(x){ return x.joker > 0; });
 
-  function seqCheck(mult, minLen){
+  function seqCheck(mult, minLen, maxLen){
     if (hasJokerCard) return null;
     if (n % mult !== 0) return null;
     var L = n / mult;
     if (L < minLen) return null;
+    if (maxLen && L > maxLen) return null;
     var counts = {};
     nw.forEach(function(x){ counts[x.rank] = (counts[x.rank] || 0) + 1; });
     var variants = [counts];
@@ -481,7 +482,7 @@ function analyze(cards){
     }
   }
   if (st) return { type:"straight", len:n, mainKey:st.top, bombScore:0, label:"顺子" };
-  var pr = seqCheck(2, 3);
+  var pr = seqCheck(2, 3, 3);
   if (pr) return { type:"pairs", len:n, mainKey:pr.top, bombScore:0, label:"连对" };
   var tr3 = seqCheck(3, 2);
   if (tr3) return { type:"trios", len:n, mainKey:tr3.top, bombScore:0, label:"钢板" };
@@ -577,7 +578,7 @@ function genCombos(hand){
   }
   seqGen(1, 5, 10, false);
   seqGen(1, 5, 10, true);
-  seqGen(2, 3, 6, false);
+  seqGen(2, 3, 3, false);
   seqGen(3, 2, 4, false);
   return out;
 }
