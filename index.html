@@ -332,7 +332,7 @@
         </ul>
       </div>
 
-      <p class="foot">联机玩法：一人点「创建房间」，把 5 位房间码发给朋友；朋友打开这一页、填好名字、输入房间码点「加入房间」。房主随时可以点「开始游戏」：三人到齐是 3 人 + 1 机器人，只来一位朋友是 2 人 + 2 机器人，没人来你也可以一个人 + 3 机器人开局，空位都由机器人补。开局后朋友才赶到也没关系，输码加入就能顶下机器人的位置接着打。打牌时每人只能看到自己的手牌；网络闪断几秒不会被当成掉线。谁真掉线了，他的位置先由机器人接管，本人重新输入房间码、用原来的名字加入，就能回到自己的座位接着打。</p>
+      <p class="foot">联机玩法：一人点「创建房间」，把 5 位房间码发给朋友；朋友打开这一页、填好名字、输入房间码点「加入房间」。房主随时可以点「开始游戏」：三人到齐是 3 人 + 1 机器人，只来一位朋友是 2 人 + 2 机器人，没人来你也可以一个人 + 3 机器人开局，空位都由机器人补。开局后朋友才赶到也没关系，输码加入就能顶下机器人的位置接着打。打牌时每人只能看到自己的手牌；网络闪断不会马上被当成掉线：座位会先留 30 秒，几秒的抖动就当没发生。谁真掉线了，他的页面会自动重连，连上就自动回到自己的座位接着打；实在连不上，位置先由机器人接管，本人重新输入房间码、用原来的名字加入，也能回到自己的座位。</p>
     </div>
 
     <!-- round end overlay -->
@@ -660,6 +660,12 @@ function teamOf(seat){ return seat % 2; }
 function activeCount(){ return players.filter(function(p){ return !p.finished; }).length; }
 
 function placeholderPlayers(){
+  // Never wipe a game in progress. This once ran mid-game when the host's
+  // signaling reconnect re-fired the room-setup code (see createRoom):
+  // all four hands were replaced with empty placeholder hands while the
+  // turn, the table and the log kept pointing at the old game, leaving
+  // the whole table stuck with 0 cards each.
+  if (gameStarted) return;
   players = [];
   for (var s = 0; s < 4; s++){
     players.push({
@@ -1170,9 +1176,9 @@ $("restartBtn").addEventListener("click", function(){
   if (mode === "online" && !gameStarted){ return; }
   $("endOverlay").classList.remove("show");
   if (mode === "online"){
-    // seats whose guest is gone stay with the robot
+    // seats whose guest is gone (or whose link is down) stay with the robot
     botSeats = {};
-    [1, 3].forEach(function(s){ if (!guestConns[s]) botSeats[s] = true; });
+    [1, 3].forEach(function(s){ if (!guestConns[s] || !guestConns[s].open || pendingGone[s]) botSeats[s] = true; });
   } else {
     botSeats = {};
   }
@@ -1211,6 +1217,12 @@ var roomCode = "";
 var mySeat = 0;            // guest side: absolute seat assigned by host
 var hostConn = null;       // guest side connection to host
 var guestConns = {};       // host side: seat -> connection
+var pendingGone = {};      // host side: seat -> connection whose link dropped but is still inside the reconnect grace period
+var rejoinTimer = null;    // guest side: pending auto-rejoin attempt
+var rejoinTries = 0;       // guest side: auto-rejoin attempts so far for this drop
+var rejoinActive = false;  // guest side: an auto-rejoin loop is running
+var joinInFlight = false;  // guest side: a join/rejoin attempt is currently connecting
+var heartbeatTimer = null; // guest side: keepalive ping timer towards the host
 var lobbyNames = [null, null, BOT_NAME, null];
 var seatTaken = [false, false, true, false];
 var botSeats = {};         // seats taken over by the robot after a drop
@@ -1316,6 +1328,17 @@ function createRoom(){
   }, 15000);
   peer.on("open", function(){
     clearNetTimer();
+    if (netRole === "host"){
+      // PeerJS fires "open" AGAIN when the signaling socket reconnects
+      // after a network wobble (see the "disconnected" handler below,
+      // which calls peer.reconnect()). The room — and any game in
+      // progress — is still ours, so the setup below must NOT run again:
+      // re-running it once replaced every player's hand with an empty
+      // placeholder hand mid-game and left the whole table stuck at
+      // 0 cards. Just resync the guests with the current state.
+      broadcastState();
+      return;
+    }
     netRole = "host";
     mySeat = 0;
     lobbyNames[0] = readName();
@@ -1352,14 +1375,36 @@ function createRoom(){
 function onGuestConnection(conn){
   var assigned = 0;
   var goneTimer = null;
-  function cancelGoneTimer(){ if (goneTimer){ clearTimeout(goneTimer); goneTimer = null; } }
-  function goneNow(){
-    cancelGoneTimer();
-    onGuestGone(assigned, conn);
+  function cancelGone(){
+    if (goneTimer){ clearTimeout(goneTimer); goneTimer = null; }
+    if (assigned && pendingGone[assigned] === conn) delete pendingGone[assigned];
+  }
+  function noteLinkDown(){
+    // EVERY drop signal lands here — ICE "disconnected", ICE "failed" /
+    // "closed", and the data channel's own "close". An earlier version
+    // treated "close" and "failed" as an instant departure (only
+    // "disconnected" got a grace period), but in practice a phone that
+    // locks its screen, switches apps, or wobbles between WiFi and 5G
+    // produces exactly those signals while its owner is still sitting
+    // at the table — and the seat was handed to the robot on the spot.
+    // Now the seat is kept for a full 30 seconds: any message, an ICE
+    // recovery, or the player rejoining with the same name cancels the
+    // takeover, and only a link that is still down when the timer
+    // fires is treated as a real departure.
+    if (assigned) pendingGone[assigned] = conn;
+    if (goneTimer) return;
+    goneTimer = setTimeout(function(){
+      goneTimer = null;
+      if (assigned && pendingGone[assigned] === conn) delete pendingGone[assigned];
+      onGuestGone(assigned, conn);
+    }, 30000);
+    if (assigned && gameStarted && players[assigned] && !players[assigned].isBot){
+      netStatus("<b>" + escapeHtml(lobbyNames[assigned] || "一位玩家") + "</b> 的连接好像断了，座位先给他留着——30 秒内连回来就当没断过，机器人不会抢他的牌。");
+    }
   }
   conn.on("data", function(d){
     if (!d || typeof d !== "object") return;
-    cancelGoneTimer(); // any message from this phone proves the link is alive
+    cancelGone(); // any message from this phone proves the link is alive
     if (d.type === "hello"){
       if (assigned) return;
       if (gameStarted){
@@ -1370,7 +1415,17 @@ function onGuestConnection(conn){
         var backName = sanitizeName(d.name) || "玩家";
         var reclaim = 0;
         [1, 3].forEach(function(s){
-          if (!reclaim && botSeats[s] && !guestConns[s] && (fillBots[s] || lobbyNames[s] === backName)) reclaim = s;
+          if (reclaim) return;
+          // a robot-filled seat (nobody ever sat there) is open to anyone
+          if (botSeats[s] && !guestConns[s] && fillBots[s]){ reclaim = s; return; }
+          // A dropped player's own seat: theirs again when they come back
+          // with the same name — whether the robot has already taken over,
+          // the link is still inside its reconnect grace period, or the
+          // old connection is simply gone. (Name match ignores case: the
+          // name was typed by hand on a phone keyboard.)
+          if (seatTaken[s] && lobbyNames[s] &&
+              lobbyNames[s].toLowerCase() === backName.toLowerCase() &&
+              (botSeats[s] || pendingGone[s] || !guestConns[s])) reclaim = s;
         });
         if (!reclaim){
           try { conn.send({ type: "reject", reason: "这一局已经开始了，等这场打完再来。" }); } catch (e) {}
@@ -1379,6 +1434,7 @@ function onGuestConnection(conn){
         assigned = reclaim;
         guestConns[reclaim] = conn;
         delete botSeats[reclaim];
+        delete pendingGone[reclaim];
         var tookFillSeat = !!fillBots[reclaim];
         if (tookFillSeat){
           // this seat was robot-filled at start: a friend arriving late
@@ -1424,23 +1480,10 @@ function onGuestConnection(conn){
       onGuestSort(assigned, d.order);
     }
   });
-  conn.on("close", goneNow);
+  conn.on("close", noteLinkDown);
   conn.on("iceStateChanged", function(st){
-    if (st === "connected" || st === "completed"){ cancelGoneTimer(); return; }
-    if (st === "closed" || st === "failed"){ goneNow(); return; }
-    if (st === "disconnected" && !goneTimer){
-      // ICE "disconnected" is usually a momentary network hiccup (a WiFi/5G
-      // wobble, a few lost packets) and the link normally recovers within
-      // seconds. Treating it as a departure — as this code used to — handed
-      // the seat to the robot while the player was still sitting there,
-      // which is how a second “robot” appeared mid-game and a real player
-      // vanished. Only treat the seat as dropped if the link is still down
-      // after a grace period; recovery or any message cancels the takeover.
-      goneTimer = setTimeout(function(){
-        goneTimer = null;
-        onGuestGone(assigned, conn);
-      }, 12000);
-    }
+    if (st === "connected" || st === "completed"){ cancelGone(); return; }
+    noteLinkDown(); // disconnected / failed / closed: same grace period
   });
 }
 function placeholderPlayersIfIdle(){
@@ -1561,18 +1604,34 @@ function joinRoom(){
     netStatus("房间码是 5 位字母数字，检查一下再输。");
     return;
   }
+  doJoin(code, false);
+}
+function doJoin(code, isRejoin){
+  if (!peerAvailable()) return;
   roomCode = code;
   if (peer){ try { peer.destroy(); } catch (e) {} peer = null; }
   hostConn = null;
   clearNetTimer();
-  netStatus("正在连接房间 <b>" + code + "</b> …");
+  joinInFlight = true;
+  netStatus(isRejoin
+    ? "正在重新连接房间 <b>" + code + "</b>（第 " + rejoinTries + " 次尝试）…"
+    : "正在连接房间 <b>" + code + "</b> …");
   peer = new Peer(PEER_OPTS);
   var opened = false;   // data channel to the host is open
   var signaled = false; // we registered with the signaling server
+  var connectStarted = false;
   function joinFailed(msg){
     clearNetTimer();
+    joinInFlight = false;
     if (peer){ try { peer.destroy(); } catch (e) {} peer = null; }
     hostConn = null;
+    if (isRejoin && rejoinActive){
+      // one auto-rejoin attempt failed: wait a few seconds and try again
+      // instead of dumping the player out of the game
+      netStatus(msg + "正在继续自动重连，你的座位先由机器人顶着。");
+      scheduleRejoin(false);
+      return;
+    }
     if (netRole === "guest") netRole = null;
     netStatus(msg);
   }
@@ -1581,34 +1640,60 @@ function joinRoom(){
   // screen sat on “正在连接房间 …”. Now every failure path says so.
   netTimer = setTimeout(function(){
     if (opened) return;
+    if (isRejoin){
+      joinFailed("重新连接超时：还没连上房主。");
+      return;
+    }
     joinFailed(signaled
       ? "连接房间 <b>" + code + "</b> 超时：联机服务器连上了，但和房主的手机没直连上。多半是两边的网络互相挡住了——先确认房主的游戏页面还开着、房间码是房主刚建的那个；然后你和房主都试试切换网络（WiFi 换成流量，或流量换成 WiFi），再重新点「加入房间」。"
       : "连接房间 <b>" + code + "</b> 超时：连联机服务器都没连上。检查一下这台手机的网络（可以把 WiFi 换成流量、或流量换成 WiFi 试试），再点一次「加入房间」。");
-  }, 20000);
+  }, isRejoin ? 15000 : 20000);
   peer.on("open", function(){
+    if (connectStarted) return; // a signaling reconnect re-fires "open": never open a second channel to the host
+    connectStarted = true;
     signaled = true;
     netStatus("联机服务器已连上，正在和房主建立连接 …");
     hostConn = peer.connect(PEER_PREFIX + code.toLowerCase(), { reliable: true });
     hostConn.on("open", function(){
       opened = true;
       clearNetTimer();
+      joinInFlight = false;
       netRole = "guest";
+      var wasRejoin = isRejoin && rejoinActive;
+      rejoinActive = false;
+      rejoinTries = 0;
+      if (rejoinTimer){ clearTimeout(rejoinTimer); rejoinTimer = null; }
       hostConn.send({ type: "hello", name: readName() });
-      netStatus("已连上房间，等房主点「开始游戏」。你的手牌只有你自己能看到。");
+      startHeartbeat();
+      netStatus(wasRejoin
+        ? "重新连上了！正在把你的座位从机器人手里换回来…"
+        : "已连上房间，等房主点「开始游戏」。你的手牌只有你自己能看到。");
     });
     hostConn.on("data", function(d){
       if (!d || typeof d !== "object") return;
       if (d.type === "state") applySnapshot(d);
       else if (d.type === "reject"){
+        rejoinActive = false;
+        if (rejoinTimer){ clearTimeout(rejoinTimer); rejoinTimer = null; }
         netStatus("没能加入：" + escapeHtml(d.reason || "房间不可用。"));
         leaveRoom(true);
       }
     });
     hostConn.on("close", function(){
-      if (netRole === "guest"){
-        netStatus("和房主的连接断了。如果房主那边还在打，重新输入这个房间码、用<b>原来的名字</b>点「加入房间」，就能回到自己的座位接着打（你的位置先由机器人顶着）。房主真的退出了，就自己创建一个新房间。");
-        leaveRoom(true);
+      stopHeartbeat();
+      if (netRole !== "guest") return;
+      if (!opened && joinInFlight) return; // an attempt is still resolving; its timeout/error path drives the retry
+      if (gameStarted && roomCode){
+        // Dropped mid-game (screen locked, app switched, network wobble):
+        // keep the table on screen and reconnect automatically with the
+        // same name — the host hands the seat straight back. The player
+        // no longer has to retype the room code while the robot plays
+        // their cards for them.
+        scheduleRejoin(true);
+        return;
       }
+      netStatus("和房主的连接断了。如果房主那边还在打，重新输入这个房间码、用<b>原来的名字</b>点「加入房间」，就能回到自己的座位接着打（你的位置先由机器人顶着）。房主真的退出了，就自己创建一个新房间。");
+      leaveRoom(true);
     });
     hostConn.on("error", function(){
       if (!opened){
@@ -1626,6 +1711,10 @@ function joinRoom(){
   });
   peer.on("error", function(err){
     if (err.type === "peer-unavailable"){
+      if (isRejoin){
+        joinFailed("暂时找不到房主的房间（房主的页面可能刚好也断了一下）。");
+        return;
+      }
       clearNetTimer();
       netStatus("找不到房间 <b>" + code + "</b>：确认房间码没输错、房主那边还开着这一页。");
     } else if (!opened && (err.type === "network" || err.type === "server-error")){
@@ -1638,6 +1727,52 @@ function sendToHost(msg){
     try { hostConn.send(msg); } catch (e) {}
   }
 }
+/* While connected, guests ping the host every few seconds. Any message
+   cancels the host's drop grace timer, so a live-but-quiet player (just
+   watching, not playing cards) is never mistaken for a dropped one, and
+   the pings keep the phones' network path warm. */
+function startHeartbeat(){
+  stopHeartbeat();
+  heartbeatTimer = setInterval(function(){ sendToHost({ type: "ping" }); }, 5000);
+}
+function stopHeartbeat(){
+  if (heartbeatTimer){ clearInterval(heartbeatTimer); heartbeatTimer = null; }
+}
+/* Auto-rejoin: after a mid-game drop the guest's page retries the room
+   with the same code and the same name until the host hands the seat
+   back (the host keeps the seat for exactly this). Gives up after 12
+   attempts and falls back to the manual rejoin instructions. */
+function scheduleRejoin(reset){
+  if (reset){
+    rejoinTries = 0;
+    netStatus("和房主的连接断了，正在自动重新连接…你的座位先由机器人顶着，连上就自动回到你的座位，不用重新输房间码。");
+  }
+  rejoinActive = true;
+  if (rejoinTimer) return;
+  rejoinTimer = setTimeout(tryRejoin, 3500);
+}
+function tryRejoin(){
+  rejoinTimer = null;
+  if (!rejoinActive || netRole !== "guest" || !roomCode) return;
+  rejoinTries++;
+  if (rejoinTries > 12){
+    rejoinActive = false;
+    netStatus("自动重连试了很多次还是没连上。如果房主那边还在打，重新输入这个房间码、用<b>原来的名字</b>点「加入房间」，就能回到自己的座位接着打（你的位置先由机器人顶着）。房主真的退出了，就自己创建一个新房间。");
+    leaveRoom(true);
+    return;
+  }
+  doJoin(roomCode, true);
+}
+document.addEventListener("visibilitychange", function(){
+  // Coming back to the tab (screen was locked, another app was in front)
+  // is the classic moment a link turns out to be dead: if the connection
+  // is gone and no reconnect is under way, start one right away instead
+  // of sitting on a frozen table.
+  if (document.visibilityState !== "visible") return;
+  if (netRole === "guest" && gameStarted && roomCode && !joinInFlight && !(hostConn && hostConn.open)){
+    scheduleRejoin(true);
+  }
+});
 function applySnapshot(s){
   levelRank = s.levelRank;
   teamLevel = s.teamLevel;
@@ -1686,10 +1821,16 @@ function applySnapshot(s){
 /* ---------- room lifecycle ---------- */
 function leaveRoom(silent){
   clearNetTimer();
+  stopHeartbeat();
+  if (rejoinTimer){ clearTimeout(rejoinTimer); rejoinTimer = null; }
+  rejoinActive = false;
+  rejoinTries = 0;
+  joinInFlight = false;
   if (peer){ try { peer.destroy(); } catch (e) {} }
   peer = null;
   hostConn = null;
   guestConns = {};
+  pendingGone = {};
   netRole = null;
   gameStarted = false;
   botSeats = {};
