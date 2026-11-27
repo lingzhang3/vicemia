@@ -1,0 +1,1596 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" href="data:," />
+    <title>掼蛋</title>
+    <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.5/dist/peerjs.min.js"></script>
+    <style>
+      button, [role="button"], select, summary, input:not([type="checkbox"], [type="radio"]) { min-height: 2rem; }
+    </style>
+    <style>
+      :root{
+        --bg:#e9e6df; --panel:#f7f5ef; --ink:#1d2420; --ink-soft:#5a665e;
+        --line:#d8d2c4; --accent:#9a3412; --accent-ink:#fff7ed;
+        --gold:#c9a227; --felt:#14532d; --felt-deep:#0b3d20; --felt-edge:#082c17;
+        --card-bg:#fffdf7; --card-ink:#1c1c1c; --red:#c0272d;
+        --chip:#0e2f1c; --shadow:0 10px 30px rgba(20,30,20,.18);
+      }
+      @media (prefers-color-scheme: dark){
+        :root{
+          --bg:#101613; --panel:#1a211c; --ink:#e8ece7; --ink-soft:#9fb0a2;
+          --line:#2e3a31; --accent:#e07840; --accent-ink:#1c1005;
+          --chip:#0a2415; --shadow:0 10px 30px rgba(0,0,0,.5);
+        }
+      }
+      *{ box-sizing:border-box; }
+      html,body{ margin:0; padding:0; }
+      body{
+        background:var(--bg); color:var(--ink);
+        font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,-apple-system,"Segoe UI",sans-serif;
+        -webkit-tap-highlight-color:transparent;
+      }
+      .wrap{ max-width:920px; margin:0 auto; padding:14px 14px 30px; }
+      /* ---------- top bar ---------- */
+      .topbar{ display:flex; flex-wrap:wrap; align-items:center; gap:10px 14px; margin-bottom:12px; }
+      .topbar h1{ font-size:26px; margin:0; letter-spacing:.14em; font-weight:800; }
+      .level-badge{
+        display:inline-flex; align-items:center; gap:6px; background:var(--accent); color:var(--accent-ink);
+        border-radius:999px; padding:5px 14px; font-weight:700; font-size:15px;
+      }
+      .level-badge b{ font-size:19px; }
+      .score-line{ font-size:14px; color:var(--ink-soft); }
+      .score-line b{ color:var(--ink); }
+      .topbar .spacer{ flex:1; }
+      .btn{
+        appearance:none; border:1px solid var(--line); background:var(--panel); color:var(--ink);
+        border-radius:10px; padding:8px 16px; font-size:15px; font-weight:600; cursor:pointer; min-height:40px;
+      }
+      .btn:active{ transform:translateY(1px); }
+      .btn.primary{ background:var(--accent); border-color:var(--accent); color:var(--accent-ink); }
+      .btn:disabled{ opacity:.45; cursor:not-allowed; }
+      /* ---------- mode switch ---------- */
+      .modes{ display:flex; gap:8px; margin:0 0 12px; flex-wrap:wrap; }
+      .mode-btn{
+        flex:1 1 200px; text-align:left; border:1px solid var(--line); background:var(--panel); color:var(--ink);
+        border-radius:12px; padding:10px 14px; cursor:pointer; min-height:52px;
+      }
+      .mode-btn .t{ font-weight:700; font-size:16px; display:block; }
+      .mode-btn .d{ font-size:13px; color:var(--ink-soft); display:block; margin-top:2px; }
+      .mode-btn[aria-pressed="true"]{ border-color:var(--gold); box-shadow:0 0 0 2px var(--gold) inset; }
+      /* ---------- online panel ---------- */
+      .netpanel{
+        background:var(--panel); border:1px solid var(--line); border-radius:16px;
+        padding:14px 16px; margin-bottom:12px; box-shadow:var(--shadow);
+      }
+      .netpanel .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin:8px 0; }
+      .netpanel label{ font-size:14px; font-weight:700; }
+      .netpanel input[type="text"]{
+        border:1px solid var(--line); background:var(--bg); color:var(--ink);
+        border-radius:10px; padding:9px 12px; font-size:16px; min-height:44px;
+      }
+      #myName{ width:150px; }
+      #joinCode{
+        width:130px; text-transform:uppercase; letter-spacing:.18em; font-weight:800; text-align:center;
+      }
+      .netpanel .btn{ min-height:44px; }
+      .netstatus{ font-size:14.5px; color:var(--ink-soft); margin:8px 0 2px; line-height:1.6; }
+      .netstatus b{ color:var(--ink); }
+      .codebox{
+        display:none; align-items:center; gap:14px; flex-wrap:wrap;
+        border:1px dashed var(--gold); border-radius:12px; padding:10px 14px; margin:10px 0 4px;
+      }
+      .codebox.show{ display:flex; }
+      .codebox .code{ font-size:32px; font-weight:800; letter-spacing:.3em; color:var(--accent); }
+      .codebox .hint{ font-size:13.5px; color:var(--ink-soft); line-height:1.55; }
+      .lobby{ display:none; margin-top:10px; }
+      .lobby.show{ display:block; }
+      .lobby .seats{ display:flex; gap:8px; flex-wrap:wrap; margin:6px 0 10px; }
+      .lobby .lseat{
+        border:1px solid var(--line); border-radius:999px; padding:5px 13px; font-size:14px;
+        background:var(--bg); color:var(--ink-soft);
+      }
+      .lobby .lseat.full{ color:var(--ink); border-color:var(--gold); font-weight:700; }
+      .lobby .lseat .tag{ font-size:12px; opacity:.75; }
+      /* ---------- table ---------- */
+      .table{
+        position:relative; border-radius:26px; padding:14px;
+        background:radial-gradient(ellipse at 50% 42%, #1d6b3a 0%, var(--felt) 55%, var(--felt-deep) 100%);
+        border:10px solid #5b3a1e; outline:2px solid var(--felt-edge);
+        box-shadow:var(--shadow); min-height:430px; overflow:hidden;
+      }
+      .seat{
+        position:absolute; display:flex; flex-direction:column; align-items:center; gap:3px;
+        color:#eaf5ec; font-size:13px; z-index:3; min-width:86px; text-align:center;
+      }
+      .seat .avatar{
+        width:46px; height:46px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+        background:var(--chip); border:2px solid rgba(255,255,255,.35); font-size:22px;
+      }
+      .seat.turn .avatar{ border-color:var(--gold); box-shadow:0 0 0 3px rgba(201,162,39,.55), 0 0 18px rgba(201,162,39,.5); }
+      .seat .nm{ font-weight:700; font-size:14px; text-shadow:0 1px 3px rgba(0,0,0,.5); }
+      .seat .meta{ font-size:12px; opacity:.92; text-shadow:0 1px 2px rgba(0,0,0,.5); }
+      .seat .fin{ background:var(--gold); color:#241a00; border-radius:999px; padding:1px 9px; font-weight:800; font-size:12px; }
+      .seat.s0{ bottom:8px; left:50%; transform:translateX(-50%); }
+      .seat.s2{ top:8px; left:50%; transform:translateX(-50%); }
+      .seat.s1{ right:8px; top:50%; transform:translateY(-50%); }
+      .seat.s3{ left:8px; top:50%; transform:translateY(-50%); }
+      .backs{ display:flex; }
+      .backs i{
+        width:16px; height:24px; border-radius:3px; margin-left:-9px; display:block;
+        background:repeating-linear-gradient(45deg,#8c1d18 0 4px,#a52a21 4px 8px);
+        border:1px solid rgba(255,255,255,.65);
+      }
+      .backs i:first-child{ margin-left:0; }
+      /* trick slots */
+      .slot{ position:absolute; z-index:2; display:flex; flex-direction:column; align-items:center; gap:4px; max-width:46%; }
+      .slot .who{ font-size:12px; color:#dcefe0; text-shadow:0 1px 2px rgba(0,0,0,.6); }
+      .slot .passmark{
+        background:rgba(0,0,0,.45); color:#ffe9a8; border:1px solid rgba(255,233,168,.5);
+        padding:4px 14px; border-radius:999px; font-weight:700; font-size:14px;
+      }
+      .slot.p0{ bottom:130px; left:50%; transform:translateX(-50%); }
+      .slot.p2{ top:130px; left:50%; transform:translateX(-50%); }
+      .slot.p1{ right:104px; top:50%; transform:translateY(-50%); }
+      .slot.p3{ left:104px; top:50%; transform:translateY(-50%); }
+      .slot .cardsrow{ display:flex; justify-content:center; }
+      .center-note{
+        position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+        color:rgba(255,255,255,.85); font-size:14px; text-align:center; z-index:1; width:70%;
+        text-shadow:0 1px 3px rgba(0,0,0,.5); pointer-events:none;
+      }
+      /* ---------- cards ---------- */
+      .card{
+        position:relative; flex:0 0 auto; width:52px; height:74px; border-radius:8px;
+        background:var(--card-bg); color:var(--card-ink); border:1px solid #cbbf9f;
+        box-shadow:0 2px 6px rgba(0,0,0,.28); padding:5px 6px; user-select:none; -webkit-user-select:none;
+      }
+      .card .rk{ font-size:19px; font-weight:800; line-height:1; display:block; }
+      .card .st{ font-size:16px; line-height:1.15; display:block; }
+      .card.red{ color:var(--red); }
+      .card.joker .rk{ font-size:15px; letter-spacing:.08em; writing-mode:vertical-rl; margin:0 auto; }
+      .card.joker-big{ color:var(--red); }
+      .card .wildtag{
+        position:absolute; right:-5px; top:-7px; background:var(--gold); color:#241a00;
+        font-size:11px; font-weight:800; border-radius:999px; padding:1px 6px; box-shadow:0 1px 4px rgba(0,0,0,.35);
+      }
+      .card.mini{ width:32px; height:46px; border-radius:5px; padding:3px 4px; margin-left:-14px; }
+      .card.mini:first-child{ margin-left:0; }
+      .card.mini .rk{ font-size:13px; }
+      .card.mini .st{ font-size:11px; }
+      .card.mini.joker .rk{ font-size:10px; }
+      .card.mini .wildtag{ font-size:9px; padding:0 4px; right:-4px; top:-5px; }
+      /* ---------- hand & actions ---------- */
+      .log{
+        min-height:24px; margin:12px 2px 6px; font-size:15px; color:var(--ink-soft);
+      }
+      .log b{ color:var(--ink); }
+      .handzone{ background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:12px 12px 10px; box-shadow:var(--shadow); }
+      .handhead{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px; }
+      .handhead .who{ font-weight:800; font-size:16px; }
+      .handhead .combo{ font-size:14px; color:var(--accent); font-weight:700; }
+      .handhead .combo.bad{ color:var(--ink-soft); font-weight:500; }
+      .handhead .spacer{ flex:1; }
+      .handscroll{ padding:16px 2px 6px; }
+      .hand{ display:block; }
+      .handrow{ display:flex; }
+      .handrow + .handrow{ margin-top:14px; }
+      .hand .card{ margin-left:-25px; cursor:pointer; transition:transform .12s ease; touch-action:none; }
+      .hand .card:first-child{ margin-left:0; }
+      .hand .card.dragging{ transition:none; z-index:30; cursor:grabbing; box-shadow:0 14px 26px rgba(0,0,0,.45); }
+      .hand .card.dropmark{ box-shadow:-4px 0 0 0 var(--gold), 0 2px 6px rgba(0,0,0,.28); }
+      .hand .card.dropmark-end{ box-shadow:4px 0 0 0 var(--gold), 0 2px 6px rgba(0,0,0,.28); }
+      .draghint{ font-size:12.5px; color:var(--ink-soft); }
+      .hand .card.sel{ transform:translateY(-15px); border-color:var(--gold); box-shadow:0 0 0 2px var(--gold), 0 8px 14px rgba(0,0,0,.3); z-index:2; }
+      .hand .card.dim{ opacity:.55; }
+      .hand-empty{ color:var(--ink-soft); font-size:15px; padding:12px 2px; }
+      .actions{ display:flex; gap:10px; margin-top:10px; flex-wrap:wrap; }
+      .actions .btn{ flex:1 1 100px; min-height:48px; font-size:16px; border-radius:12px; }
+      .actions .btn.play{ flex:2 1 140px; }
+      /* ---------- overlays ---------- */
+      .overlay{
+        position:fixed; inset:0; background:rgba(8,20,12,.82); z-index:50;
+        display:none; align-items:center; justify-content:center; padding:20px;
+      }
+      .overlay.show{ display:flex; }
+      .sheet{
+        background:var(--panel); color:var(--ink); border-radius:20px; max-width:440px; width:100%;
+        padding:26px 24px; text-align:center; box-shadow:var(--shadow); max-height:88vh; overflow-y:auto;
+      }
+      .sheet h2{ margin:0 0 8px; font-size:22px; }
+      .sheet p{ margin:6px 0; font-size:15px; color:var(--ink-soft); line-height:1.6; }
+      .sheet .big{ font-size:19px; color:var(--ink); font-weight:700; }
+      .sheet .btn{ margin-top:14px; min-height:50px; padding:10px 26px; font-size:16px; border-radius:12px; }
+      .sheet table{ margin:12px auto; border-collapse:collapse; font-size:15px; }
+      .sheet td{ padding:4px 12px; text-align:left; }
+      .sheet td:last-child{ text-align:right; font-weight:700; }
+      /* ---------- rules ---------- */
+      .rules{
+        margin-top:16px; background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:16px 18px;
+        font-size:14.5px; line-height:1.75; color:var(--ink-soft); display:none;
+      }
+      .rules.show{ display:block; }
+      .rules h3{ color:var(--ink); margin:10px 0 4px; font-size:16px; }
+      .rules h3:first-child{ margin-top:0; }
+      .rules ul{ margin:4px 0 8px; padding-left:20px; }
+      .foot{ margin-top:14px; font-size:13px; color:var(--ink-soft); line-height:1.7; }
+      @media (max-width:560px){
+        .table{ min-height:424px; border-width:7px; border-radius:20px; }
+        .card{ width:45px; height:65px; }
+        .card .rk{ font-size:16px; }
+        .card .st{ font-size:14px; }
+        .hand .card{ margin-left:-23px; }
+        .slot.p1{ right:96px; } .slot.p3{ left:96px; }
+        .slot.p0{ bottom:124px; } .slot.p2{ top:124px; }
+        .seat{ min-width:70px; } .seat .avatar{ width:40px; height:40px; font-size:19px; }
+        .topbar h1{ font-size:22px; }
+        .codebox .code{ font-size:26px; }
+        .center-note{ width:54%; font-size:13px; }
+      }
+      @media (prefers-reduced-motion: reduce){
+        .hand .card{ transition:none; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="topbar">
+        <h1>掼蛋</h1>
+        <span class="level-badge">本局打 <b id="levelNow">2</b></span>
+        <span class="score-line" id="scoreLine"></span>
+        <span class="spacer"></span>
+        <button class="btn" id="rulesBtn" type="button">规则</button>
+        <button class="btn" id="restartBtn" type="button">重新开赛</button>
+      </div>
+
+      <div class="modes" role="group" aria-label="对局模式">
+        <button class="mode-btn" id="modeOnline" type="button" aria-pressed="true">
+          <span class="t">联机房间 · 三人 + 机器人</span>
+          <span class="d">开个房间把房间码发给两位朋友，各自在自己手机上打，机器人补北家</span>
+        </button>
+        <button class="mode-btn" id="modeSolo" type="button" aria-pressed="false">
+          <span class="t">单人练习</span>
+          <span class="d">你坐南家，另外三家都由机器人打</span>
+        </button>
+      </div>
+
+      <div class="netpanel" id="netPanel">
+        <div class="row">
+          <label for="myName">你的名字</label>
+          <input type="text" id="myName" maxlength="8" placeholder="比如：Ling" autocomplete="off" />
+        </div>
+        <div class="row" id="createRow">
+          <button class="btn primary" id="createBtn" type="button">创建房间</button>
+          <span style="font-size:14px;color:var(--ink-soft)">或者输入朋友给你的房间码加入：</span>
+          <input type="text" id="joinCode" maxlength="5" placeholder="房间码" autocomplete="off" />
+          <button class="btn" id="joinBtn" type="button">加入房间</button>
+        </div>
+        <div class="codebox" id="codeBox">
+          <span class="code" id="roomCodeText"></span>
+          <span class="hint">把这个房间码发给两位朋友（微信发过去就行），<br />他们在这页输入房间码就能进来。</span>
+        </div>
+        <div class="lobby" id="lobbyBox">
+          <div class="seats" id="lobbySeats"></div>
+          <div class="row">
+            <button class="btn primary" id="startBtn" type="button" disabled>开始游戏</button>
+            <button class="btn" id="leaveBtn" type="button">离开房间</button>
+          </div>
+        </div>
+        <p class="netstatus" id="netStatus">联机是手机之间直接连的：一位朋友创建房间，另外两位输码加入，凑齐三人后由房主点「开始游戏」。</p>
+      </div>
+
+      <div class="table" id="table">
+        <div class="center-note" id="centerNote"></div>
+        <div class="slot p0" id="slot0"></div>
+        <div class="slot p1" id="slot1"></div>
+        <div class="slot p2" id="slot2"></div>
+        <div class="slot p3" id="slot3"></div>
+        <div class="seat s0" id="seat0"></div>
+        <div class="seat s1" id="seat1"></div>
+        <div class="seat s2" id="seat2"></div>
+        <div class="seat s3" id="seat3"></div>
+      </div>
+
+      <p class="log" id="log"></p>
+
+      <div class="handzone">
+        <div class="handhead">
+          <span class="who" id="handWho"></span>
+          <span class="combo" id="comboLabel"></span>
+          <span class="draghint">按住一张牌拖动，可以按自己的想法排顺序</span>
+          <span class="spacer"></span>
+          <button class="btn" id="sortBtn" type="button">整理手牌</button>
+        </div>
+        <div class="handscroll"><div class="hand" id="hand"></div></div>
+        <div class="actions">
+          <button class="btn" id="hintBtn" type="button">提示</button>
+          <button class="btn" id="passBtn" type="button">不出</button>
+          <button class="btn primary play" id="playBtn" type="button">出牌</button>
+        </div>
+      </div>
+
+      <div class="rules" id="rules">
+        <h3>基本规则</h3>
+        <ul>
+          <li>四人两副牌（108 张），每人 27 张。对面是队友：南+北一队，东+西一队。</li>
+          <li>从 2 开始打级牌：级牌比 A 还大；红桃级牌是「逢人配」，可以当任意一张牌（大小王除外）。</li>
+          <li>大小顺序：大王 &gt; 小王 &gt; 级牌 &gt; A &gt; K &gt; … &gt; 3 &gt; 2。</li>
+        </ul>
+        <h3>牌型</h3>
+        <ul>
+          <li>单张、对子、三张、三带二、顺子（5 张起）、连对（3 对起）、钢板（2 个连续三张起）。</li>
+          <li>炸弹：4 张以上同点；同花顺按 5 张炸弹算，大于 5 张炸弹、小于 6 张炸弹；四张王是「四大天王」，最大。</li>
+          <li>管牌必须同牌型、同长度比大小；炸弹可以管任何普通牌型。</li>
+        </ul>
+        <h3>升级</h3>
+        <ul>
+          <li>一局里先出完的是头游。头游的队友是二游，两队友包揽前两名叫「双下」，胜方升 3 级；队友第三名升 2 级；队友最后一名升 1 级。</li>
+          <li>下一局打胜方的级数，由头游先出牌。先打过 A 的一队赢下整场。</li>
+          <li>本桌省去了进贡/还贡环节，开局直接打。</li>
+        </ul>
+      </div>
+
+      <p class="foot">联机玩法：一人点「创建房间」，把 5 位房间码发给另外两位朋友；朋友打开这一页、填好名字、输入房间码点「加入房间」。三人到齐后房主点「开始游戏」，北家由机器人自动打。打牌时每人只能看到自己的手牌；谁中途掉线，他的位置会由机器人接管，不耽误这一局。</p>
+    </div>
+
+    <!-- round end overlay -->
+    <div class="overlay" id="endOverlay">
+      <div class="sheet">
+        <h2 id="endTitle">本局结束</h2>
+        <div id="endBody"></div>
+        <button class="btn primary" id="endNext" type="button">下一局</button>
+      </div>
+    </div>
+
+<script>
+"use strict";
+/* ================= cards & levels ================= */
+var SUITS = ["♠","♥","♣","♦"];
+var RANK_LABEL = {2:"2",3:"3",4:"4",5:"5",6:"6",7:"7",8:"8",9:"9",10:"10",11:"J",12:"Q",13:"K",14:"A"};
+var levelRank = 2;              // face rank being played this hand
+var teamLevel = [2, 2];         // team 0 = seats 0&2, team 1 = seats 1&3
+var cardSeq = 0;
+
+function makeCard(suit, rank, joker){
+  return { id: cardSeq++, suit: suit, rank: rank, joker: joker || 0 };
+}
+function isWild(c){ return c.joker === 0 && c.suit === 1 && c.rank === levelRank; }
+function rankPower(rank){ return rank === levelRank ? 15 : rank; } // 14=A ... 3, 2 lowest when not level
+function cardPower(c){
+  if (c.joker) return 15 + c.joker; // small 16, big 17
+  return rankPower(c.rank);
+}
+function buildDeck(){
+  var d = [];
+  for (var k = 0; k < 2; k++){
+    for (var s = 0; s < 4; s++) for (var r = 2; r <= 14; r++) d.push(makeCard(s, r, 0));
+    d.push(makeCard(-1, 0, 1)); d.push(makeCard(-1, 0, 2));
+  }
+  return d;
+}
+function shuffle(a){
+  for (var i = a.length - 1; i > 0; i--){
+    var j = Math.floor(Math.random() * (i + 1));
+    var t = a[i]; a[i] = a[j]; a[j] = t;
+  }
+  return a;
+}
+function sortHand(hand){
+  hand.sort(function(a, b){
+    var pa = cardPower(a), pb = cardPower(b);
+    if (pa !== pb) return pa - pb;
+    if (a.joker || b.joker) return a.joker - b.joker;
+    return a.suit - b.suit;
+  });
+}
+function keyOf(c){ return c.joker ? "j" + c.joker : "r" + c.rank; }
+
+/* ================= combo analysis ================= */
+// returns {type,len,mainKey,bombScore,label} or null
+function analyze(cards){
+  var n = cards.length;
+  if (!n) return null;
+  var wilds = [], nw = [];
+  cards.forEach(function(c){ (isWild(c) ? wilds : nw).push(c); });
+  var w = wilds.length;
+
+  // four jokers = king bomb
+  if (n === 4 && w === 0 && nw.every(function(x){ return x.joker > 0; }))
+    return { type:"jokerbomb", len:4, mainKey:99, bombScore:10000, label:"四大天王" };
+
+  // group non-wild by key
+  var groups = {};
+  nw.forEach(function(x){ var k = keyOf(x); (groups[k] = groups[k] || []).push(x); });
+  var gkeys = Object.keys(groups);
+
+  // same-rank family: single / pair / trio / bomb (wilds join the rank)
+  if (gkeys.length <= 1){
+    var key = gkeys[0];
+    var hasJoker = key && key.charAt(0) === "j";
+    if (!hasJoker || n <= 2){
+      var mainRank = key ? nw[0].rank : levelRank;
+      var mp = key && hasJoker ? (15 + nw[0].joker) : rankPower(mainRank);
+      if (n === 1) return { type:"single", len:1, mainKey:mp, bombScore:0, label:"单张" };
+      if (n === 2) return { type:"pair", len:2, mainKey:mp, bombScore:0, label:"对子" };
+      if (n === 3) return { type:"trio", len:3, mainKey:mp, bombScore:0, label:"三张" };
+      if (n >= 4 && !hasJoker)
+        return { type:"bomb", len:n, mainKey:mp, bombScore:n * 100 + mp, label:n + "张炸弹" };
+      return null;
+    }
+    return null; // 3+ mixed/same jokers that aren't the 4-joker bomb
+  }
+
+  // sequences need faces; jokers can never join
+  var hasJokerCard = nw.some(function(x){ return x.joker > 0; });
+
+  function seqCheck(mult, minLen){
+    if (hasJokerCard) return null;
+    if (n % mult !== 0) return null;
+    var L = n / mult;
+    if (L < minLen) return null;
+    var counts = {};
+    nw.forEach(function(x){ counts[x.rank] = (counts[x.rank] || 0) + 1; });
+    var variants = [counts];
+    if (counts[14]){ var m2 = {}; for (var k in counts) m2[k === "14" ? 1 : k] = counts[k]; variants.push(m2); }
+    for (var v = 0; v < variants.length; v++){
+      var cm = variants[v];
+      var faces = Object.keys(cm).map(Number);
+      var lo = Math.min.apply(null, faces), hi = Math.max.apply(null, faces);
+      for (var s = Math.max(1, hi - L + 1); s <= lo; s++){
+        if (s + L - 1 > 14) continue;
+        var ok = true, deficit = 0;
+        for (var f = s; f < s + L; f++){
+          var cnt = cm[f] || 0;
+          if (cnt > mult){ ok = false; break; }
+          deficit += mult - cnt;
+        }
+        if (!ok) continue;
+        var outside = faces.some(function(f){ return f < s || f >= s + L; });
+        if (outside) continue;
+        if (deficit === w) return { top: s + L - 1, L: L };
+      }
+    }
+    return null;
+  }
+
+  // straight flush (bomb family)
+  var st = seqCheck(1, 5);
+  if (st){
+    var suits = {};
+    nw.forEach(function(x){ suits[x.suit] = true; });
+    var suitKeys = Object.keys(suits);
+    if (suitKeys.length === 1 && (w === 0 || suitKeys[0] === "1"))
+      return { type:"straightflush", len:n, mainKey:st.top, bombScore:550 + st.top, label:"同花顺" };
+  }
+  // full house: 5 cards, trio + pair
+  if (n === 5 && !hasJokerCard){
+    var cand = gkeys.slice();
+    if (w > 0 && cand.indexOf("r" + levelRank) === -1) cand.push("r" + levelRank);
+    for (var a = 0; a < cand.length; a++) for (var b = 0; b < cand.length; b++){
+      if (a === b) continue;
+      var ct = groups[cand[a]] ? groups[cand[a]].length : 0;
+      var cp = groups[cand[b]] ? groups[cand[b]].length : 0;
+      if (ct > 3 || cp > 2) continue;
+      if (ct + cp !== nw.length) continue;
+      if ((3 - ct) + (2 - cp) === w){
+        var tr = parseInt(cand[a].slice(1), 10);
+        return { type:"fullhouse", len:5, mainKey:rankPower(tr), bombScore:0, label:"三带二" };
+      }
+    }
+  }
+  if (st) return { type:"straight", len:n, mainKey:st.top, bombScore:0, label:"顺子" };
+  var pr = seqCheck(2, 3);
+  if (pr) return { type:"pairs", len:n, mainKey:pr.top, bombScore:0, label:"连对" };
+  var tr3 = seqCheck(3, 2);
+  if (tr3) return { type:"trios", len:n, mainKey:tr3.top, bombScore:0, label:"钢板" };
+  return null;
+}
+function isBombCombo(c){ return c && (c.type === "bomb" || c.type === "jokerbomb" || c.type === "straightflush"); }
+function beats(a, b){
+  if (!a) return false;
+  if (!b) return true;
+  var ab = isBombCombo(a), bb = isBombCombo(b);
+  if (ab && bb) return a.bombScore > b.bombScore;
+  if (ab) return true;
+  if (bb) return false;
+  if (a.type !== b.type || a.len !== b.len) return false;
+  return a.mainKey > b.mainKey;
+}
+
+/* ================= combo generation (AI + hint) ================= */
+function genCombos(hand){
+  var out = [], seen = {};
+  var wilds = hand.filter(isWild);
+  var nw = hand.filter(function(c){ return !isWild(c); });
+  var groups = {};
+  nw.forEach(function(c){ var k = keyOf(c); (groups[k] = groups[k] || []).push(c); });
+
+  function add(cards){
+    if (!cards.length) return;
+    var combo = analyze(cards);
+    if (!combo) return;
+    var sig = combo.type + "|" + combo.len + "|" + combo.mainKey + "|" + combo.bombScore;
+    if (seen[sig]) return;
+    seen[sig] = true;
+    out.push({ cards: cards.slice(), combo: combo });
+  }
+  Object.keys(groups).forEach(function(k){
+    var g = groups[k];
+    if (k.charAt(0) === "j"){
+      add([g[0]]);
+      if (g.length >= 2) add(g.slice(0, 2));
+      return;
+    }
+    add([g[0]]);
+    if (g.length >= 2) add(g.slice(0, 2));
+    else if (wilds.length >= 1) add([g[0], wilds[0]]);
+    if (g.length >= 3) add(g.slice(0, 3));
+    else if (wilds.length >= 3 - g.length) add(g.concat(wilds.slice(0, 3 - g.length)));
+    if (g.length >= 4) add(g.slice());
+    else if (g.length >= 2 && g.length + wilds.length >= 4) add(g.concat(wilds.slice(0, 4 - g.length)));
+  });
+  // joker bomb
+  var jokers = nw.filter(function(c){ return c.joker > 0; });
+  if (jokers.length === 4) add(jokers);
+  // wild-only pair
+  if (wilds.length >= 2) add(wilds.slice(0, 2));
+  // full houses
+  var rankKeys = Object.keys(groups).filter(function(k){ return k.charAt(0) === "r"; });
+  rankKeys.forEach(function(ta){
+    rankKeys.forEach(function(pb){
+      if (ta === pb) return;
+      var ga = groups[ta], gb = groups[pb];
+      var needA = Math.max(0, 3 - ga.length), needB = Math.max(0, 2 - gb.length);
+      if (ga.length > 3 || gb.length > 2) return;
+      if (needA + needB <= wilds.length)
+        add(ga.concat(gb).concat(wilds.slice(0, needA + needB)));
+    });
+  });
+  // sequences by window over face groups
+  var faceCards = {};
+  nw.forEach(function(c){ if (!c.joker) (faceCards[c.rank] = faceCards[c.rank] || []).push(c); });
+  function seqGen(mult, minL, maxL, flushOnly){
+    for (var L = minL; L <= maxL; L++){
+      for (var s = 1; s + L - 1 <= 14; s++){
+        var picks = [], deficit = 0, ok = true;
+        for (var f = s; f < s + L; f++){
+          var face = f === 1 ? 14 : f;
+          var g = faceCards[face] || [];
+          var take = Math.min(g.length, mult);
+          for (var t = 0; t < take; t++) picks.push(g[t]);
+          deficit += mult - take;
+        }
+        if (deficit > wilds.length) { ok = false; }
+        if (!ok) continue;
+        var sel = picks.concat(wilds.slice(0, deficit));
+        if (flushOnly){
+          var ss = {}; picks.forEach(function(c){ ss[c.suit] = true; });
+          if (Object.keys(ss).length !== 1) continue;
+          if (deficit > 0 && !picks.length) continue;
+          if (deficit > 0 && Object.keys(ss)[0] !== "1") continue;
+        }
+        if (sel.length === L * mult) add(sel);
+      }
+    }
+  }
+  seqGen(1, 5, 10, false);
+  seqGen(1, 5, 10, true);
+  seqGen(2, 3, 6, false);
+  seqGen(3, 2, 4, false);
+  return out;
+}
+function nextActiveAfter(seat){
+  for (var i = 1; i <= 4; i++){
+    var s = (seat + i) % 4;
+    if (!players[s].finished) return s;
+  }
+  return seat;
+}
+function aiChoose(seat){
+  var p = players[seat];
+  var hand = p.hand;
+  var combos = genCombos(hand);
+  var cur = currentPlay ? currentPlay.combo : null;
+
+  if (!cur){
+    var order = ["straight", "pairs", "trios", "fullhouse", "trio", "pair", "single"];
+    for (var oi = 0; oi < order.length; oi++){
+      var cands = combos.filter(function(x){ return x.combo.type === order[oi] && !isBombCombo(x.combo); });
+      if (!cands.length) continue;
+      cands.sort(function(a, b){ return a.combo.mainKey - b.combo.mainKey || b.cards.length - a.cards.length; });
+      var pick = cands[0];
+      if (order[oi] === "single" && pick.combo.mainKey >= 15 && hand.length > 6){
+        var low = combos.filter(function(x){ return !isBombCombo(x.combo); })
+          .sort(function(a, b){ return a.combo.mainKey - b.combo.mainKey; })[0];
+        if (low) return low;
+      }
+      return pick;
+    }
+    var any = combos.filter(function(x){ return !isBombCombo(x.combo); })
+      .sort(function(a, b){ return a.combo.mainKey - b.combo.mainKey; })[0];
+    return any || combos[0] || null;
+  }
+
+  var resp = combos.filter(function(x){ return beats(x.combo, cur); });
+  if (!resp.length) return null;
+  var partnerWinning = currentPlay.seat === (seat + 2) % 4;
+  var finishes = resp.filter(function(x){ return x.cards.length === hand.length; });
+  if (partnerWinning && !finishes.length){
+    if (isBombCombo(cur) || cur.mainKey >= 13) return null; // let partner keep it
+  }
+  var nonBomb = resp.filter(function(x){ return !isBombCombo(x.combo); });
+  nonBomb.sort(function(a, b){ return a.combo.mainKey - b.combo.mainKey || b.cards.length - a.cards.length; });
+  if (nonBomb.length) return nonBomb[0];
+  var oppNext = nextActiveAfter(seat);
+  var oppDanger = players[oppNext].hand.length <= 2 && oppNext !== (seat + 2) % 4;
+  resp.sort(function(a, b){ return a.combo.bombScore - b.combo.bombScore; });
+  if (finishes.length || isBombCombo(cur) || oppDanger || hand.length <= 5) return resp[0];
+  return null;
+}
+
+/* ================= game state ================= */
+var SOLO_NAMES = ["你", "东东", "掼掼", "西西"];
+var BOT_NAME = "掼掼";
+var players = [];
+var mode = "online"; // 'online' (host runs it) | 'solo' (all local)
+var turn = 0;
+var currentPlay = null;   // {seat, cards, combo}
+var lastPlays = {};       // seat -> {cards, combo} | 'pass'
+var passesSincePlay = 0;
+var finishOrder = [];
+var handActive = false;
+var viewSeat = 0;         // whose hand is on screen (always the local player)
+var selected = {};        // card id -> true
+var dragState = null;     // in-progress hand-card drag (manual reordering)
+var justDragged = false;  // swallow the click that follows a drag
+var firstLeader = 0;
+var botTimer = null;
+var lastLogHtml = "";
+var lastEndInfo = null;
+
+function isBotSeat(seat){
+  if (mode === "solo") return seat !== 0;
+  if (seat === 2) return true;              // the robot partner
+  return !!botSeats[seat];                  // a guest who dropped -> robot takes over
+}
+function teamOf(seat){ return seat % 2; }
+function activeCount(){ return players.filter(function(p){ return !p.finished; }).length; }
+
+function placeholderPlayers(){
+  players = [];
+  for (var s = 0; s < 4; s++){
+    players.push({
+      seat: s,
+      name: lobbyNames[s] || "等待加入…",
+      isBot: s === 2,
+      hand: [],
+      finished: 0
+    });
+  }
+}
+function newMatch(){
+  teamLevel = [2, 2];
+  levelRank = 2;
+  firstLeader = 0;
+  newHand();
+}
+function newHand(){
+  clearTimeout(botTimer);
+  lastEndInfo = null;
+  var deck = shuffle(buildDeck());
+  players = [];
+  for (var s = 0; s < 4; s++){
+    var hand = deck.slice(s * 27, s * 27 + 27);
+    sortHand(hand);
+    players.push({
+      seat: s,
+      name: mode === "solo" ? SOLO_NAMES[s]
+        : (lobbyNames[s] || "等待加入…") + (botSeats[s] ? "（机器人代打）" : ""),
+      isBot: isBotSeat(s),
+      hand: hand,
+      finished: 0
+    });
+  }
+  turn = firstLeader;
+  currentPlay = null;
+  lastPlays = {};
+  passesSincePlay = 0;
+  finishOrder = [];
+  selected = {};
+  handActive = true;
+  viewSeat = 0;
+  setLog("发牌完毕，每人 27 张。本局打 <b>" + RANK_LABEL[levelRank] + "</b>，由 <b>" + players[turn].name + "</b> 先出。");
+  startTurn(true);
+}
+
+function respondersNeeded(){
+  if (!currentPlay) return 0;
+  return activeCount() - (players[currentPlay.seat].finished ? 0 : 1);
+}
+
+function applyPlay(seat, cards){
+  var p = players[seat];
+  var combo = analyze(cards);
+  var ids = {};
+  cards.forEach(function(c){ ids[c.id] = true; });
+  p.hand = p.hand.filter(function(c){ return !ids[c.id]; });
+  currentPlay = { seat: seat, cards: cards.slice(), combo: combo };
+  lastPlays = {}; lastPlays[seat] = { cards: cards.slice(), combo: combo };
+  passesSincePlay = 0;
+  selected = {};
+  setLog("<b>" + p.name + "</b> 出了 " + combo.label + "（" + cards.length + " 张）。");
+  if (p.hand.length === 0){
+    p.finished = finishOrder.length + 1;
+    finishOrder.push(seat);
+    setLog("<b>" + p.name + "</b> 出完啦，第 " + p.finished + " 名！");
+    if (checkHandEnd()) return;
+  }
+  advance();
+}
+function applyPass(seat){
+  lastPlays[seat] = "pass";
+  passesSincePlay++;
+  setLog("<b>" + players[seat].name + "</b> 不出。");
+  advance();
+}
+function advance(){
+  if (!handActive) return;
+  if (currentPlay && passesSincePlay >= respondersNeeded()){
+    var winner = currentPlay.seat;
+    var leader;
+    if (!players[winner].finished) leader = winner;
+    else if (!players[(winner + 2) % 4].finished) leader = (winner + 2) % 4;
+    else leader = nextActiveAfter(winner);
+    currentPlay = null;
+    lastPlays = {};
+    passesSincePlay = 0;
+    turn = leader;
+    setLog("这一轮 <b>" + players[winner].name + "</b> 最大，由 <b>" + players[leader].name + "</b> 先出。");
+  } else {
+    turn = nextActiveAfter(turn);
+  }
+  startTurn(false);
+}
+function checkHandEnd(){
+  var done = false;
+  if (finishOrder.length === 3) done = true;
+  if (finishOrder.length === 2 && teamOf(finishOrder[0]) === teamOf(finishOrder[1])) done = true;
+  if (activeCount() <= 1) done = true;
+  if (!done) return false;
+  handActive = false;
+  var remaining = players.filter(function(p){ return !p.finished; })
+    .sort(function(a, b){ return a.hand.length - b.hand.length; });
+  remaining.forEach(function(p){ p.finished = finishOrder.length + 1; finishOrder.push(p.seat); });
+  endHand();
+  return true;
+}
+function endHand(){
+  var head = finishOrder[0];
+  var headTeam = teamOf(head);
+  var partnerPos = finishOrder.indexOf((head + 2) % 4); // 1,2,3
+  var gain = partnerPos === 1 ? 3 : partnerPos === 2 ? 2 : 1;
+  var newLevel = teamLevel[headTeam] + gain;
+  var matchWin = newLevel > 14;
+  teamLevel[headTeam] = Math.min(14, newLevel);
+  levelRank = teamLevel[headTeam];
+  firstLeader = head;
+  lastEndInfo = {
+    order: finishOrder.slice(),
+    names: finishOrder.map(function(s){ return players[s].name; }),
+    headTeam: headTeam, gain: gain, doubleDown: partnerPos === 1,
+    levelLabel: RANK_LABEL[teamLevel[headTeam]],
+    nextLabel: RANK_LABEL[levelRank],
+    headName: players[head].name,
+    matchWin: matchWin
+  };
+  render();
+  showEndOverlay(lastEndInfo, false);
+}
+function endHtml(info){
+  var teamName = info.headTeam === 0 ? "南北队" : "东西队";
+  return "<table>" +
+    "<tr><td>头游</td><td>" + escapeHtml(info.names[0]) + "</td></tr>" +
+    "<tr><td>二游</td><td>" + escapeHtml(info.names[1]) + "</td></tr>" +
+    "<tr><td>三游</td><td>" + escapeHtml(info.names[2]) + "</td></tr>" +
+    "<tr><td>末游</td><td>" + escapeHtml(info.names[3]) + "</td></tr></table>" +
+    "<p><b>" + teamName + "</b>获胜，" +
+    (info.doubleDown ? "双下！" : "") + "升 <b>" + info.gain + "</b> 级，现在打 <b>" + info.levelLabel + "</b>。</p>" +
+    (info.matchWin
+      ? "<p class='big'>打过 A，" + teamName + "赢下整场！</p>"
+      : "<p>下一局打 <b>" + info.nextLabel + "</b>，由头游 " + escapeHtml(info.headName) + " 先出。</p>");
+}
+function showEndOverlay(info, waitForHost){
+  document.getElementById("endBody").innerHTML = endHtml(info);
+  document.getElementById("endTitle").textContent = info.matchWin ? "整场结束" : "本局结束";
+  var btn = document.getElementById("endNext");
+  if (waitForHost){
+    btn.textContent = "等房主开始下一局…";
+    btn.disabled = true;
+    btn.onclick = null;
+  } else {
+    btn.textContent = info.matchWin ? "再来一场" : "下一局";
+    btn.disabled = false;
+    btn.onclick = function(){
+      document.getElementById("endOverlay").classList.remove("show");
+      if (info.matchWin){ teamLevel = [2, 2]; levelRank = 2; firstLeader = 0; }
+      newHand();
+    };
+  }
+  document.getElementById("endOverlay").classList.add("show");
+}
+
+/* ================= turn flow ================= */
+function startTurn(isNewHand){
+  render();
+  if (!handActive) return;
+  var p = players[turn];
+  if (p.isBot){
+    botTimer = setTimeout(botAct, 850);
+  }
+  // human turns: the local player acts through the buttons;
+  // a remote guest's action arrives over the connection (host side).
+}
+function botAct(){
+  if (!handActive) return;
+  var seat = turn;
+  if (!players[seat].isBot) return;
+  var pick = aiChoose(seat);
+  if (pick && (!currentPlay || beats(pick.combo, currentPlay.combo))) applyPlay(seat, pick.cards);
+  else applyPass(seat);
+}
+
+/* ================= rendering ================= */
+function $(id){ return document.getElementById(id); }
+function setLog(html){ lastLogHtml = html; $("log").innerHTML = html; }
+function cardEl(c, mini){
+  var div = document.createElement("div");
+  var cls = "card" + (mini ? " mini" : "");
+  if (c.joker){
+    cls += " joker" + (c.joker === 2 ? " joker-big" : "");
+    div.className = cls;
+    div.innerHTML = "<span class='rk'>" + (c.joker === 2 ? "大王" : "小王") + "</span>";
+  } else {
+    if (c.suit === 1 || c.suit === 3) cls += " red";
+    div.className = cls;
+    div.innerHTML = "<span class='rk'>" + RANK_LABEL[c.rank] + "</span><span class='st'>" + SUITS[c.suit] + "</span>";
+  }
+  if (isWild(c)){
+    var tag = document.createElement("span");
+    tag.className = "wildtag"; tag.textContent = "配";
+    div.appendChild(tag);
+  }
+  return div;
+}
+function render(){
+  $("levelNow").textContent = RANK_LABEL[levelRank];
+  if (players.length === 4){
+    $("scoreLine").innerHTML =
+      "南北队（" + escapeHtml(players[0].name) + " + " + escapeHtml(players[2].name) + "）打 <b>" + RANK_LABEL[teamLevel[0]] + "</b>" +
+      " · 东西队（" + escapeHtml(players[1].name) + " + " + escapeHtml(players[3].name) + "）打 <b>" + RANK_LABEL[teamLevel[1]] + "</b>";
+  }
+  for (var s = 0; s < 4; s++){
+    var p = players[s];
+    if (!p) continue;
+    var el = $("seat" + s);
+    var backs = "";
+    if (s !== viewSeat){
+      var nb = Math.min(p.hand.length, 10);
+      backs = "<span class='backs'>" + "<i></i>".repeat(nb) + "</span>";
+    }
+    el.innerHTML =
+      "<span class='avatar'>" + (p.isBot ? "🤖" : "🙂") + "</span>" +
+      "<span class='nm'>" + escapeHtml(p.name) + "</span>" +
+      (p.finished ? "<span class='fin'>第 " + p.finished + " 名</span>"
+                  : "<span class='meta'>" + (handActive || p.hand.length ? "剩 " + p.hand.length + " 张" : "") + "</span>") +
+      backs;
+    el.classList.toggle("turn", handActive && turn === s);
+    var slot = $("slot" + s);
+    slot.innerHTML = "";
+    var lp = lastPlays[s];
+    if (lp === "pass"){
+      slot.innerHTML = "<span class='who'>" + escapeHtml(p.name) + "</span><span class='passmark'>不出</span>";
+    } else if (lp){
+      var row = document.createElement("div");
+      row.className = "cardsrow";
+      lp.cards.forEach(function(c){ row.appendChild(cardEl(c, true)); });
+      slot.innerHTML = "<span class='who'>" + escapeHtml(p.name) + " · " + lp.combo.label + "</span>";
+      slot.appendChild(row);
+    }
+  }
+  if (handActive){
+    $("centerNote").textContent = currentPlay
+      ? "桌面最大：" + players[currentPlay.seat].name + " 的" + currentPlay.combo.label
+      : "新的一轮，等 " + players[turn].name + " 出牌";
+  } else if (mode === "online" && netRole !== "guest" && !gameStarted){
+    $("centerNote").textContent = "创建房间，把房间码发给两位朋友；北家由机器人补位";
+  } else if (mode === "online" && netRole === "guest" && !gameStarted){
+    $("centerNote").textContent = "已加入房间，等房主开始游戏";
+  } else {
+    $("centerNote").textContent = "";
+  }
+  renderHand();
+  if (netRole === "host") broadcastState();
+}
+function currentHumanTurn(){
+  return handActive && players[turn] && !players[turn].isBot && turn === viewSeat &&
+    (mode === "solo" || netRole === "host" || netRole === "guest");
+}
+function renderHand(){
+  if (dragState && dragState.active) return; // don't rebuild the hand mid-drag
+  var handEl = $("hand");
+  handEl.innerHTML = "";
+  var p = players[viewSeat];
+  if (!p){ $("handWho").textContent = ""; return; }
+  var mine = currentHumanTurn() && viewSeat === turn;
+  $("handWho").textContent = (mode === "solo" ? "你的手牌" : p.name + " 的手牌") +
+    (handActive ? (turn === viewSeat ? "（出牌中）" : "（等 " + players[turn].name + " 出牌）") : "");
+  if (!handActive && mode === "online" && !gameStarted){
+    handEl.innerHTML = "<span class='hand-empty'>还没开局，开局后这里会显示你的手牌。</span>";
+  } else if (p.finished){
+    handEl.innerHTML = "<span class='hand-empty'>已经出完，名次第 " + p.finished + "。</span>";
+  } else {
+    var els = [];
+    p.hand.forEach(function(c){
+      var el = cardEl(c, false);
+      if (selected[c.id]) el.className += " sel";
+      if (!mine) el.className += " dim";
+      el.addEventListener("click", function(){
+        if (justDragged) return; // this click was the end of a drag, not a select
+        if (!currentHumanTurn() || viewSeat !== turn) return;
+        if (selected[c.id]) delete selected[c.id]; else selected[c.id] = true;
+        renderHand();
+      });
+      el.addEventListener("pointerdown", function(ev){ startDrag(ev, el, c); });
+      els.push(el);
+    });
+    layoutHand(handEl, els);
+  }
+  updateComboLabel();
+  var canAct = currentHumanTurn();
+  $("playBtn").disabled = !canAct;
+  $("hintBtn").disabled = !canAct;
+  $("passBtn").disabled = !canAct || !currentPlay;
+}
+/* Lay the hand out in as many rows as the width needs, so every card is
+   visible at once — no horizontal scrolling. Cards per row is measured
+   from the real card width and overlap step at render time. */
+function layoutHand(handEl, els){
+  handEl.innerHTML = "";
+  if (!els.length) return;
+  var row = document.createElement("div");
+  row.className = "handrow";
+  els.forEach(function(el){ row.appendChild(el); });
+  handEl.appendChild(row);
+  var cw = els[0].offsetWidth || 0;
+  var avail = handEl.clientWidth || 0;
+  if (!cw || !avail || els.length < 2) return;
+  var step = 0;
+  if (typeof getComputedStyle === "function"){
+    var ml = parseFloat(getComputedStyle(els[1]).marginLeft);
+    if (isFinite(ml)) step = cw + ml;
+  }
+  if (!(step > 0)) step = Math.max(10, Math.round(cw / 2));
+  var perRow = Math.max(1, Math.floor((avail - cw) / step) + 1);
+  if (els.length <= perRow) return;
+  var rows = Math.ceil(els.length / perRow);
+  var base = Math.floor(els.length / rows), extra = els.length % rows;
+  handEl.innerHTML = "";
+  var idx = 0;
+  for (var r = 0; r < rows; r++){
+    var rw = document.createElement("div");
+    rw.className = "handrow";
+    var cnt = base + (r < extra ? 1 : 0);
+    for (var i = 0; i < cnt; i++) rw.appendChild(els[idx++]);
+    handEl.appendChild(rw);
+  }
+}
+/* ================= drag to reorder the hand =================
+   Press a card and drag it sideways (across rows too): the card follows
+   the pointer, a gold mark shows where it will land, and letting go
+   commits that order. A plain tap still selects the card for playing.
+   Works any time the hand is dealt, not only on your turn. Guests send
+   the new order to the host (same channel as the sort button) so the
+   next state broadcast keeps it instead of snapping the hand back. */
+function startDrag(ev, el, card){
+  if (dragState) return;
+  if (ev.button !== undefined && ev.button > 0) return;
+  var p = players[viewSeat];
+  if (!p || p.finished || !handActive || !p.hand.length) return;
+  var els = Array.prototype.slice.call($("hand").querySelectorAll(".card"));
+  var idx = els.indexOf(el);
+  if (idx < 0) return;
+  dragState = {
+    id: card.id, el: el, active: false,
+    startX: ev.clientX, startY: ev.clientY,
+    els: els,
+    rects: els.map(function(e){ return e.getBoundingClientRect(); }),
+    fromIdx: idx, target: idx
+  };
+  window.addEventListener("pointermove", onDragMove, { passive: false });
+  window.addEventListener("pointerup", onDragEnd);
+  window.addEventListener("pointercancel", onDragEnd);
+}
+function dragTargetIndex(ev){
+  var st = dragState, rects = st.rects;
+  var rows = [];
+  for (var i = 0; i < rects.length; i++){
+    var row = null;
+    for (var r = 0; r < rows.length; r++){
+      if (Math.abs(rows[r].top - rects[i].top) < 6){ row = rows[r]; break; }
+    }
+    if (!row){ row = { top: rects[i].top, bottom: rects[i].bottom, items: [] }; rows.push(row); }
+    row.items.push(i);
+    if (rects[i].bottom > row.bottom) row.bottom = rects[i].bottom;
+  }
+  rows.sort(function(a, b){ return a.top - b.top; });
+  var row = rows[rows.length - 1];
+  for (var r2 = 0; r2 < rows.length; r2++){
+    if (ev.clientY <= rows[r2].bottom + 10){ row = rows[r2]; break; }
+  }
+  for (var j = 0; j < row.items.length; j++){
+    var i2 = row.items[j];
+    if (ev.clientX < rects[i2].left + rects[i2].width / 2) return i2; // insert before this card
+  }
+  return row.items[row.items.length - 1] + 1; // after the row's last card
+}
+function onDragMove(ev){
+  var st = dragState;
+  if (!st) return;
+  var dx = ev.clientX - st.startX, dy = ev.clientY - st.startY;
+  if (!st.active){
+    if (Math.abs(dx) < 9 && Math.abs(dy) < 9) return; // still a tap so far
+    st.active = true;
+    st.el.classList.add("dragging");
+  }
+  if (ev.cancelable) ev.preventDefault();
+  st.el.style.transform = "translate(" + dx + "px," + (dy - 6) + "px) scale(1.07)";
+  st.target = dragTargetIndex(ev);
+  st.els.forEach(function(e){ e.classList.remove("dropmark"); e.classList.remove("dropmark-end"); });
+  if (st.target === st.fromIdx || st.target === st.fromIdx + 1) return; // already there
+  if (st.target < st.els.length) st.els[st.target].classList.add("dropmark");
+  else if (st.els.length) st.els[st.els.length - 1].classList.add("dropmark-end");
+}
+function onDragEnd(){
+  var st = dragState;
+  if (!st) return;
+  window.removeEventListener("pointermove", onDragMove);
+  window.removeEventListener("pointerup", onDragEnd);
+  window.removeEventListener("pointercancel", onDragEnd);
+  dragState = null;
+  if (!st.active) return; // plain tap: the click handler selects as usual
+  justDragged = true;
+  setTimeout(function(){ justDragged = false; }, 120);
+  var p = players[viewSeat];
+  if (p){
+    var from = -1;
+    for (var i = 0; i < p.hand.length; i++) if (p.hand[i].id === st.id) from = i;
+    if (from >= 0){
+      var to = st.target;
+      var card = p.hand.splice(from, 1)[0];
+      if (to > from) to--;
+      if (to < 0) to = 0;
+      if (to > p.hand.length) to = p.hand.length;
+      p.hand.splice(to, 0, card);
+      if (netRole === "guest"){
+        sendToHost({ type: "sort", order: p.hand.map(function(c){ return c.id; }) });
+      }
+    }
+  }
+  renderHand();
+}
+function selectedCards(){
+  var p = players[viewSeat];
+  if (!p) return [];
+  return p.hand.filter(function(c){ return selected[c.id]; });
+}
+function updateComboLabel(){
+  var el = $("comboLabel");
+  var cards = selectedCards();
+  if (!cards.length){ el.textContent = ""; el.className = "combo"; return; }
+  var combo = analyze(cards);
+  if (!combo){ el.textContent = "选的牌不成牌型"; el.className = "combo bad"; return; }
+  if (currentPlay && !beats(combo, currentPlay.combo)){
+    el.textContent = combo.label + "，管不上桌面的" + currentPlay.combo.label;
+    el.className = "combo bad"; return;
+  }
+  el.textContent = combo.label;
+  el.className = "combo";
+}
+
+/* ================= controls ================= */
+$("playBtn").addEventListener("click", function(){
+  if (!currentHumanTurn()) return;
+  var cards = selectedCards();
+  var combo = analyze(cards);
+  if (!combo){ setLog("选的牌不成牌型，换一组试试。"); return; }
+  if (currentPlay && !beats(combo, currentPlay.combo)){
+    setLog("这个" + combo.label + "管不上桌面的" + currentPlay.combo.label + "。"); return;
+  }
+  if (netRole === "guest"){
+    sendToHost({ type: "action", act: "play", ids: cards.map(function(c){ return c.id; }) });
+    selected = {};
+    renderHand();
+    return;
+  }
+  applyPlay(turn, cards);
+});
+$("passBtn").addEventListener("click", function(){
+  if (!currentHumanTurn() || !currentPlay) return;
+  selected = {};
+  if (netRole === "guest"){
+    sendToHost({ type: "action", act: "pass" });
+    renderHand();
+    return;
+  }
+  applyPass(turn);
+});
+$("hintBtn").addEventListener("click", function(){
+  if (!currentHumanTurn()) return;
+  var pick = aiChoose(turn);
+  selected = {};
+  if (pick) pick.cards.forEach(function(c){ selected[c.id] = true; });
+  renderHand();
+  if (!pick) setLog("提示：没有能管上的牌，可以点「不出」。");
+});
+function handIsAsc(hand){
+  for (var i = 1; i < hand.length; i++)
+    if (cardPower(hand[i]) < cardPower(hand[i - 1])) return false;
+  return true;
+}
+$("sortBtn").addEventListener("click", function(){
+  var p = players[viewSeat];
+  if (!p || !p.hand.length) return;
+  // The hand is dealt smallest-first, so a plain re-sort would change
+  // nothing and look broken: if it is already smallest-first, flip it
+  // to biggest-first instead (and back). Every press visibly rearranges.
+  var desc = handIsAsc(p.hand);
+  sortHand(p.hand);
+  if (desc) p.hand.reverse();
+  if (netRole === "guest"){
+    // Guests: the host owns the state and rebroadcasts it on every move,
+    // which used to wipe out a locally sorted hand within seconds. Send
+    // the new order to the host so it is stored and sticks.
+    sendToHost({ type: "sort", order: p.hand.map(function(c){ return c.id; }) });
+  }
+  renderHand();
+  var lbl = $("comboLabel");
+  lbl.textContent = "已整理手牌：" + (desc ? "从大到小" : "从小到大");
+  lbl.className = "combo";
+});
+var handResizeTimer = null;
+window.addEventListener("resize", function(){
+  clearTimeout(handResizeTimer);
+  handResizeTimer = setTimeout(renderHand, 120);
+});
+$("restartBtn").addEventListener("click", function(){
+  if (netRole === "guest"){ setLog("你是加入房间的玩家，重新开赛请房主操作。"); return; }
+  if (mode === "online" && !gameStarted){ return; }
+  $("endOverlay").classList.remove("show");
+  if (mode === "online"){
+    // seats whose guest is gone stay with the robot
+    botSeats = {};
+    [1, 3].forEach(function(s){ if (!guestConns[s]) botSeats[s] = true; });
+  } else {
+    botSeats = {};
+  }
+  newMatch();
+});
+$("rulesBtn").addEventListener("click", function(){
+  $("rules").classList.toggle("show");
+});
+function setMode(m){
+  if (netRole){ return; } // leave the room first
+  mode = m;
+  $("modeOnline").setAttribute("aria-pressed", m === "online" ? "true" : "false");
+  $("modeSolo").setAttribute("aria-pressed", m === "solo" ? "true" : "false");
+  $("netPanel").style.display = m === "online" ? "" : "none";
+  $("endOverlay").classList.remove("show");
+  clearTimeout(botTimer);
+  if (m === "solo"){
+    newMatch();
+  } else {
+    handActive = false;
+    gameStarted = false;
+    placeholderPlayers();
+    setLog("联机模式：创建房间或输入房间码加入，和两位朋友一起打，机器人补北家。");
+    render();
+  }
+}
+$("modeOnline").addEventListener("click", function(){ if (mode !== "online") setMode("online"); });
+$("modeSolo").addEventListener("click", function(){ if (mode !== "solo") setMode("solo"); });
+
+/* ================= networking (PeerJS, host-authoritative) ================= */
+var PEER_PREFIX = "muse-guandan-v1-";
+var CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+var netRole = null;        // null | 'host' | 'guest'
+var peer = null;
+var roomCode = "";
+var mySeat = 0;            // guest side: absolute seat assigned by host
+var hostConn = null;       // guest side connection to host
+var guestConns = {};       // host side: seat -> connection
+var lobbyNames = [null, null, BOT_NAME, null];
+var seatTaken = [false, false, true, false];
+var botSeats = {};         // seats taken over by the robot after a drop
+var gameStarted = false;
+var createTries = 0;
+
+function netStatus(html){ $("netStatus").innerHTML = html; }
+function readName(){
+  var v = $("myName").value.trim();
+  return sanitizeName(v) || "玩家";
+}
+function sanitizeName(s){
+  // names are interpolated into innerHTML in several places; strip markup chars at every entry point
+  return String(s == null ? "" : s).replace(/[<>&"'`]/g, "").slice(0, 12);
+}
+function genCode(){
+  var s = "";
+  for (var i = 0; i < 5; i++) s += CODE_CHARS.charAt(Math.floor(Math.random() * CODE_CHARS.length));
+  return s;
+}
+function peerAvailable(){
+  if (typeof Peer === "undefined"){
+    netStatus("联机组件没有加载成功（需要联网加载）。检查一下网络，刷新页面再试；也可以先玩上面的单人练习。");
+    return false;
+  }
+  return true;
+}
+
+/* ---------- lobby UI ---------- */
+var SEAT_TAGS = ["南家 · 房主", "东家", "北家 · 机器人", "西家"];
+function renderLobby(){
+  var box = $("lobbySeats");
+  box.innerHTML = "";
+  for (var s = 0; s < 4; s++){
+    var span = document.createElement("span");
+    var full = s === 2 || !!lobbyNames[s];
+    span.className = "lseat" + (full ? " full" : "");
+    span.innerHTML = "<span class='tag'>" + SEAT_TAGS[s] + "</span> " +
+      (s === 2 ? BOT_NAME : (lobbyNames[s] ? escapeHtml(lobbyNames[s]) : "等待加入…"));
+    box.appendChild(span);
+  }
+  var ready = seatTaken[1] && seatTaken[3];
+  $("startBtn").disabled = !(netRole === "host" && ready && !gameStarted);
+  $("startBtn").textContent = gameStarted ? "已开局" : (ready ? "开始游戏" : "等人到齐…");
+}
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, function(ch){
+    return { "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[ch];
+  });
+}
+function showInRoomUI(){
+  $("lobbyBox").classList.add("show");
+  $("createRow").style.display = netRole === "host" ? "none" : "";
+  if (netRole === "guest"){
+    $("startBtn").style.display = "none";
+    $("joinCode").disabled = true;
+    $("joinBtn").disabled = true;
+  }
+  renderLobby();
+}
+
+/* ---------- host ---------- */
+function createRoom(){
+  if (!peerAvailable()) return;
+  createTries++;
+  if (peer){ try { peer.destroy(); } catch (e) {} peer = null; }
+  roomCode = genCode();
+  peer = new Peer(PEER_PREFIX + roomCode.toLowerCase());
+  peer.on("open", function(){
+    netRole = "host";
+    mySeat = 0;
+    lobbyNames[0] = readName();
+    seatTaken[0] = true;
+    $("roomCodeText").textContent = roomCode;
+    $("codeBox").classList.add("show");
+    $("createBtn").disabled = true;
+    $("joinBtn").disabled = true;
+    $("joinCode").disabled = true;
+    showInRoomUI();
+    placeholderPlayers();
+    render();
+    netStatus("房间建好了。把房间码 <b>" + roomCode + "</b> 发给两位朋友，他们输码加入，三人到齐后你点「开始游戏」。北家是机器人<b>" + BOT_NAME + "</b>，你的对家。");
+  });
+  peer.on("connection", onGuestConnection);
+  peer.on("error", function(err){
+    if (err.type === "unavailable-id" && createTries < 4){
+      try { peer.destroy(); } catch (e) {}
+      createRoom();
+      return;
+    }
+    if (err.type === "network" || err.type === "server-error"){
+      netStatus("连不上联机服务器，检查一下网络再试一次。");
+    } else if (netRole !== "host"){
+      netStatus("创建房间出错（" + err.type + "），刷新页面再试。");
+    }
+  });
+}
+function onGuestConnection(conn){
+  var assigned = 0;
+  conn.on("data", function(d){
+    if (!d || typeof d !== "object") return;
+    if (d.type === "hello"){
+      if (gameStarted){
+        try { conn.send({ type: "reject", reason: "这一局已经开始了，等这场打完再来。" }); } catch (e) {}
+        return;
+      }
+      if (assigned) return;
+      var seat = !seatTaken[1] ? 1 : (!seatTaken[3] ? 3 : 0);
+      if (!seat){
+        try { conn.send({ type: "reject", reason: "房间满了，已经有三位玩家了。" }); } catch (e) {}
+        return;
+      }
+      assigned = seat;
+      seatTaken[seat] = true;
+      lobbyNames[seat] = sanitizeName(d.name) || "玩家";
+      guestConns[seat] = conn;
+      placeholderPlayersIfIdle();
+      renderLobby();
+      broadcastState();
+      netStatus("<b>" + escapeHtml(lobbyNames[seat]) + "</b> 加入了房间（" + SEAT_TAGS[seat] + "）。" +
+        (seatTaken[1] && seatTaken[3] ? "人到齐了，点「开始游戏」开打！" : "还差一位朋友。"));
+      return;
+    }
+    if (d.type === "action" && assigned){
+      onGuestAction(assigned, d);
+    }
+    if (d.type === "sort" && assigned){
+      onGuestSort(assigned, d.order);
+    }
+  });
+  function gone(){ onGuestGone(assigned, conn); }
+  conn.on("close", gone);
+  conn.on("iceStateChanged", function(st){ if (st === "disconnected" || st === "closed") gone(); });
+}
+function placeholderPlayersIfIdle(){
+  if (!gameStarted) placeholderPlayers();
+}
+function onGuestGone(seat, conn){
+  if (!seat || guestConns[seat] !== conn) return;
+  delete guestConns[seat];
+  var name = lobbyNames[seat] || "一位玩家";
+  if (!gameStarted){
+    seatTaken[seat] = false;
+    lobbyNames[seat] = null;
+    placeholderPlayers();
+    renderLobby();
+    render();
+    netStatus("<b>" + escapeHtml(name) + "</b> 离开了房间。");
+    return;
+  }
+  // mid-game: robot takes over this seat so the hand can finish
+  botSeats[seat] = true;
+  if (players[seat]){
+    players[seat].isBot = true;
+    players[seat].name = name + "（机器人代打）";
+  }
+  setLog("<b>" + escapeHtml(name) + "</b> 掉线了，这个位置由机器人代打。");
+  renderLobby();
+  render();
+  if (handActive && turn === seat && players[seat].isBot){
+    clearTimeout(botTimer);
+    botTimer = setTimeout(botAct, 900);
+  }
+}
+function onGuestSort(seat, order){
+  // A guest rearranged their own hand: store that exact order here so the
+  // next state broadcast keeps it instead of snapping the hand back.
+  if (!gameStarted || !players[seat] || !Array.isArray(order)) return;
+  var hand = players[seat].hand;
+  if (order.length !== hand.length) return;
+  var byId = {};
+  hand.forEach(function(c){ byId[c.id] = c; });
+  var seen = {}, next = [];
+  for (var i = 0; i < order.length; i++){
+    var c = byId[order[i]];
+    if (!c || seen[c.id]) return; // not exactly this hand's cards -> ignore
+    seen[c.id] = true;
+    next.push(c);
+  }
+  players[seat].hand = next;
+  render(); // rebroadcasts, confirming the guest's order back to them
+}
+function onGuestAction(seat, d){
+  if (!handActive || !gameStarted) return;
+  if (turn !== seat || players[seat].isBot) return;
+  if (d.act === "pass"){
+    if (!currentPlay) return;
+    applyPass(seat);
+    return;
+  }
+  if (d.act === "play"){
+    if (!Array.isArray(d.ids) || !d.ids.length || d.ids.length > 27) return;
+    var byId = {};
+    players[seat].hand.forEach(function(c){ byId[c.id] = c; });
+    var cards = [];
+    for (var i = 0; i < d.ids.length; i++){
+      var c = byId[d.ids[i]];
+      if (!c) return; // card not in hand -> ignore the whole action
+      cards.push(c);
+    }
+    var combo = analyze(cards);
+    if (!combo) return;
+    if (currentPlay && !beats(combo, currentPlay.combo)) return;
+    applyPlay(seat, cards);
+  }
+}
+function snapshotFor(gseat){
+  var pub = [];
+  for (var s = 0; s < 4; s++){
+    var p = players[s];
+    pub.push({
+      name: p ? p.name : (lobbyNames[s] || "等待加入…"),
+      isBot: p ? p.isBot : s === 2,
+      count: p ? p.hand.length : 0,
+      finished: p ? p.finished : 0
+    });
+  }
+  return {
+    type: "state",
+    levelRank: levelRank,
+    teamLevel: teamLevel.slice(),
+    turn: turn,
+    handActive: handActive,
+    gameStarted: gameStarted,
+    currentPlay: currentPlay ? { seat: currentPlay.seat, cards: currentPlay.cards, combo: currentPlay.combo } : null,
+    lastPlays: lastPlays,
+    finishOrder: finishOrder.slice(),
+    players: pub,
+    mySeat: gseat,
+    myHand: gameStarted && players[gseat] ? players[gseat].hand : [],
+    log: lastLogHtml,
+    endInfo: lastEndInfo
+  };
+}
+function broadcastState(){
+  if (netRole !== "host") return;
+  for (var seat in guestConns){
+    var conn = guestConns[seat];
+    if (conn && conn.open){
+      try { conn.send(snapshotFor(parseInt(seat, 10))); } catch (e) {}
+    }
+  }
+}
+
+/* ---------- guest ---------- */
+function joinRoom(){
+  if (!peerAvailable()) return;
+  var code = $("joinCode").value.trim().toUpperCase();
+  if (code.length !== 5){
+    netStatus("房间码是 5 位字母数字，检查一下再输。");
+    return;
+  }
+  roomCode = code;
+  if (peer){ try { peer.destroy(); } catch (e) {} peer = null; }
+  netStatus("正在连接房间 <b>" + code + "</b> …");
+  peer = new Peer();
+  var opened = false;
+  peer.on("open", function(){
+    hostConn = peer.connect(PEER_PREFIX + code.toLowerCase(), { reliable: true });
+    hostConn.on("open", function(){
+      opened = true;
+      netRole = "guest";
+      hostConn.send({ type: "hello", name: readName() });
+      netStatus("已连上房间，等房主点「开始游戏」。你的手牌只有你自己能看到。");
+    });
+    hostConn.on("data", function(d){
+      if (!d || typeof d !== "object") return;
+      if (d.type === "state") applySnapshot(d);
+      else if (d.type === "reject"){
+        netStatus("没能加入：" + escapeHtml(d.reason || "房间不可用。"));
+        leaveRoom(true);
+      }
+    });
+    hostConn.on("close", function(){
+      if (netRole === "guest"){
+        netStatus("房主离开了，房间已经结束。可以自己创建一个新房间。");
+        leaveRoom(true);
+      }
+    });
+  });
+  peer.on("error", function(err){
+    if (err.type === "peer-unavailable"){
+      netStatus("找不到房间 <b>" + code + "</b>：确认房间码没输错、房主那边还开着这一页。");
+    } else if (!opened && (err.type === "network" || err.type === "server-error")){
+      netStatus("连不上联机服务器，检查一下网络再试一次。");
+    }
+  });
+}
+function sendToHost(msg){
+  if (hostConn && hostConn.open){
+    try { hostConn.send(msg); } catch (e) {}
+  }
+}
+function applySnapshot(s){
+  levelRank = s.levelRank;
+  teamLevel = s.teamLevel;
+  handActive = s.handActive;
+  gameStarted = s.gameStarted;
+  finishOrder = s.finishOrder || [];
+  mySeat = s.mySeat;
+  var my = s.mySeat;
+  players = [];
+  for (var d = 0; d < 4; d++){
+    var a = (my + d) % 4;
+    var sp = s.players[a];
+    var hand;
+    if (d === 0){
+      hand = s.myHand || [];
+    } else {
+      hand = [];
+      for (var i = 0; i < sp.count; i++) hand.push({ id: -1000 - d * 100 - i, suit: 0, rank: 2, joker: 0 });
+    }
+    players.push({ seat: d, name: sanitizeName(sp.name), isBot: sp.isBot, hand: hand, finished: sp.finished });
+  }
+  turn = (s.turn - my + 4) % 4;
+  currentPlay = s.currentPlay
+    ? { seat: (s.currentPlay.seat - my + 4) % 4, cards: s.currentPlay.cards, combo: s.currentPlay.combo }
+    : null;
+  lastPlays = {};
+  var lp = s.lastPlays || {};
+  for (var k in lp) lastPlays[(parseInt(k, 10) - my + 4) % 4] = lp[k];
+  passesSincePlay = 0;
+  viewSeat = 0;
+  if (turn !== 0) selected = {};
+  // keep the lobby name list in sync (absolute seats -> rotate not needed for names list UI)
+  lobbyNames = [null, null, BOT_NAME, null];
+  for (var a2 = 0; a2 < 4; a2++) lobbyNames[a2] = sanitizeName(s.players[a2].name);
+  showInRoomUI();
+  if (s.log) setLog(s.log);
+  render();
+  if (s.endInfo){
+    showEndOverlay(s.endInfo, true);
+  } else {
+    $("endOverlay").classList.remove("show");
+  }
+  if (gameStarted) netStatus("对局进行中。轮到谁出牌，桌面上会有金圈标出来。");
+}
+
+/* ---------- room lifecycle ---------- */
+function leaveRoom(silent){
+  if (peer){ try { peer.destroy(); } catch (e) {} }
+  peer = null;
+  hostConn = null;
+  guestConns = {};
+  netRole = null;
+  gameStarted = false;
+  botSeats = {};
+  seatTaken = [false, false, true, false];
+  lobbyNames = [null, null, BOT_NAME, null];
+  roomCode = "";
+  clearTimeout(botTimer);
+  $("codeBox").classList.remove("show");
+  $("lobbyBox").classList.remove("show");
+  $("createRow").style.display = "";
+  $("createBtn").disabled = false;
+  $("joinBtn").disabled = false;
+  $("joinCode").disabled = false;
+  $("startBtn").style.display = "";
+  $("endOverlay").classList.remove("show");
+  handActive = false;
+  placeholderPlayers();
+  render();
+  if (!silent) netStatus("已离开房间。可以重新创建一个，或输入房间码加入朋友的房间。");
+}
+$("createBtn").addEventListener("click", createRoom);
+$("joinBtn").addEventListener("click", joinRoom);
+$("leaveBtn").addEventListener("click", function(){ leaveRoom(false); });
+$("startBtn").addEventListener("click", function(){
+  if (netRole !== "host" || gameStarted) return;
+  if (!(seatTaken[1] && seatTaken[3])) return;
+  gameStarted = true;
+  botSeats = {};
+  renderLobby();
+  netStatus("开局了！祝好运。");
+  newMatch();
+});
+
+/* ================= init ================= */
+placeholderPlayers();
+setLog("联机模式：创建房间或输入房间码加入，和两位朋友一起打，机器人补北家。");
+render();
+</script>
+  </body>
+</html>
