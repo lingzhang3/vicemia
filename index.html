@@ -1216,6 +1216,30 @@ var botSeats = {};         // seats taken over by the robot after a drop
 var gameStarted = false;
 var createTries = 0;
 
+/* Explicit ICE config. PeerJS's built-in default leans on one single free
+   relay (turn:0.peerjs.com) that is frequently dead. When a phone sits
+   behind carrier NAT (5G) or a strict home router, the direct path between
+   the two phones fails and — with no working relay to fall back on — the
+   data channel simply never opens, so joining used to hang on
+   “正在连接房间 …” forever with no error anywhere. These servers (Google
+   STUN + Metered's public Open Relay TURN over UDP, TCP and TLS ports)
+   give the connection a fallback path through a relay. */
+var PEER_OPTS = {
+  debug: 0,
+  config: {
+    iceServers: [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun1.l.google.com:19302" },
+      { urls: "stun:openrelay.metered.ca:80" },
+      { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
+      { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
+      { urls: "turns:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" }
+    ]
+  }
+};
+var netTimer = null; // pending create/join timeout, so failures surface instead of hanging
+function clearNetTimer(){ if (netTimer){ clearTimeout(netTimer); netTimer = null; } }
+
 function netStatus(html){ $("netStatus").innerHTML = html; }
 function readName(){
   var v = $("myName").value.trim();
@@ -1277,8 +1301,17 @@ function createRoom(){
   createTries++;
   if (peer){ try { peer.destroy(); } catch (e) {} peer = null; }
   roomCode = genCode();
-  peer = new Peer(PEER_PREFIX + roomCode.toLowerCase());
+  peer = new Peer(PEER_PREFIX + roomCode.toLowerCase(), PEER_OPTS);
+  clearNetTimer();
+  netTimer = setTimeout(function(){
+    if (netRole !== "host"){
+      try { peer.destroy(); } catch (e) {}
+      peer = null;
+      netStatus("创建房间超时：连不上联机服务器。检查一下网络（可以把 WiFi 换成流量、或流量换成 WiFi 试试），再点一次「创建房间」。");
+    }
+  }, 15000);
   peer.on("open", function(){
+    clearNetTimer();
     netRole = "host";
     mySeat = 0;
     lobbyNames[0] = readName();
@@ -1294,6 +1327,11 @@ function createRoom(){
     netStatus("房间建好了。把房间码 <b>" + roomCode + "</b> 发给两位朋友，他们输码加入，三人到齐后你点「开始游戏」。北家是机器人<b>" + BOT_NAME + "</b>，你的对家。");
   });
   peer.on("connection", onGuestConnection);
+  peer.on("disconnected", function(){
+    // signaling dropped but the room code is still ours: re-register so
+    // friends can still find the room instead of hitting “找不到房间”
+    try { peer.reconnect(); } catch (e) {}
+  });
   peer.on("error", function(err){
     if (err.type === "unavailable-id" && createTries < 4){
       try { peer.destroy(); } catch (e) {}
@@ -1464,13 +1502,35 @@ function joinRoom(){
   }
   roomCode = code;
   if (peer){ try { peer.destroy(); } catch (e) {} peer = null; }
+  hostConn = null;
+  clearNetTimer();
   netStatus("正在连接房间 <b>" + code + "</b> …");
-  peer = new Peer();
-  var opened = false;
+  peer = new Peer(PEER_OPTS);
+  var opened = false;   // data channel to the host is open
+  var signaled = false; // we registered with the signaling server
+  function joinFailed(msg){
+    clearNetTimer();
+    if (peer){ try { peer.destroy(); } catch (e) {} peer = null; }
+    hostConn = null;
+    if (netRole === "guest") netRole = null;
+    netStatus(msg);
+  }
+  // The old code waited forever here: if the phones' direct path (and the
+  // relay fallback) could not be established, no event ever fired and the
+  // screen sat on “正在连接房间 …”. Now every failure path says so.
+  netTimer = setTimeout(function(){
+    if (opened) return;
+    joinFailed(signaled
+      ? "连接房间 <b>" + code + "</b> 超时：联机服务器连上了，但和房主的手机没直连上。多半是两边的网络互相挡住了——先确认房主的游戏页面还开着、房间码是房主刚建的那个；然后你和房主都试试切换网络（WiFi 换成流量，或流量换成 WiFi），再重新点「加入房间」。"
+      : "连接房间 <b>" + code + "</b> 超时：连联机服务器都没连上。检查一下这台手机的网络（可以把 WiFi 换成流量、或流量换成 WiFi 试试），再点一次「加入房间」。");
+  }, 20000);
   peer.on("open", function(){
+    signaled = true;
+    netStatus("联机服务器已连上，正在和房主建立连接 …");
     hostConn = peer.connect(PEER_PREFIX + code.toLowerCase(), { reliable: true });
     hostConn.on("open", function(){
       opened = true;
+      clearNetTimer();
       netRole = "guest";
       hostConn.send({ type: "hello", name: readName() });
       netStatus("已连上房间，等房主点「开始游戏」。你的手牌只有你自己能看到。");
@@ -1489,12 +1549,26 @@ function joinRoom(){
         leaveRoom(true);
       }
     });
+    hostConn.on("error", function(){
+      if (!opened){
+        joinFailed("和房主的连接出错了。确认房主的游戏页面还开着，再点一次「加入房间」；还是不行，就你和房主都切换一下网络（WiFi / 流量）再试。");
+      }
+    });
+    hostConn.on("iceStateChanged", function(st){
+      if (!opened && (st === "failed" || st === "closed")){
+        joinFailed("和房主的手机直连没打通（两边的网络互相挡住了）。请你和房主都试试切换网络（WiFi 换成流量，或流量换成 WiFi），然后重新点「加入房间」。");
+      }
+    });
+  });
+  peer.on("disconnected", function(){
+    if (!opened){ try { peer.reconnect(); } catch (e) {} }
   });
   peer.on("error", function(err){
     if (err.type === "peer-unavailable"){
+      clearNetTimer();
       netStatus("找不到房间 <b>" + code + "</b>：确认房间码没输错、房主那边还开着这一页。");
     } else if (!opened && (err.type === "network" || err.type === "server-error")){
-      netStatus("连不上联机服务器，检查一下网络再试一次。");
+      joinFailed("连不上联机服务器，检查一下网络（可以把 WiFi 换成流量、或流量换成 WiFi 试试）再点一次「加入房间」。");
     }
   });
 }
@@ -1550,6 +1624,7 @@ function applySnapshot(s){
 
 /* ---------- room lifecycle ---------- */
 function leaveRoom(silent){
+  clearNetTimer();
   if (peer){ try { peer.destroy(); } catch (e) {} }
   peer = null;
   hostConn = null;
