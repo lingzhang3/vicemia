@@ -492,6 +492,12 @@ function analyze(cards){
     nw.forEach(function(x){ counts[x.rank] = (counts[x.rank] || 0) + 1; });
     var variants = [counts];
     if (counts[14]){ var m2 = {}; for (var k in counts) m2[k === "14" ? 1 : k] = counts[k]; variants.push(m2); }
+    // A wild card can complete a run at more than one window (e.g.
+    // 10-J-Q-K + the heart level card reads as 9-10-J-Q-K or as
+    // 10-J-Q-K-A). The run counts at the HIGHEST window it can make —
+    // returning the first (lowest) fit undervalues wild-made straights
+    // and straight flushes, so they wrongly fail to beat the table.
+    var best = null;
     for (var v = 0; v < variants.length; v++){
       var cm = variants[v];
       var faces = Object.keys(cm).map(Number);
@@ -507,10 +513,10 @@ function analyze(cards){
         if (!ok) continue;
         var outside = faces.some(function(f){ return f < s || f >= s + L; });
         if (outside) continue;
-        if (deficit === w) return { top: s + L - 1, L: L };
+        if (deficit === w && (!best || s + L - 1 > best.top)) best = { top: s + L - 1, L: L };
       }
     }
-    return null;
+    return best;
   }
 
   // straight flush (bomb family)
