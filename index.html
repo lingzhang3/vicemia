@@ -381,7 +381,7 @@
         <h3>进贡 / 还贡</h3>
         <ul>
           <li>每局开打前先上供：末游（最后一名）把自己<b>最大的牌</b>进贡给头游（第一名）。</li>
-          <li>如果输的一队包揽第三、第四名（被双下），两个人都要上供：末游贡给头游，三游贡给二游。</li>
+          <li>如果输的一队包揽第三、第四名（被双下），两个人都要上供：两人各出自己最大的牌比大小，进贡牌大的贡给头游、小的贡给二游，收贡的人再对应还牌。</li>
           <li>抗贡：进贡的人凑齐<b>一对大王</b>就不用上供——一个人手里有两张大王，或者双上供时两个人各有一张大王、合起来一对，都算抗贡。</li>
           <li>选进贡牌时，红桃级牌（逢人配）不算在内，不用拿它上供；除它之外最大的那张就是进贡牌。</li>
           <li>收到进贡的人要还一张牌（还贡）：只能还 <b>10 及以下</b>的小牌（大小王、级牌、逢人配不能还）。</li>
@@ -646,46 +646,307 @@ function nextActiveAfter(seat){
   }
   return seat;
 }
-function aiChoose(seat){
+/* ================= bot strategy =================
+   Built from the strategy doc （策略制定 / 控牌技术 / 配合原则 /
+   掼蛋口诀） and the house principles （配合对家、控牌算牌、灵活
+   变牌型、把握炸弹时机）:
+   - 开局先估牌力定主攻还是助攻：数炸弹、大牌（大小王、级牌、A、
+     K)，看牌整不整（对子、三张、顺子）、散牌多不多。牌强主攻争
+     头游，牌弱助攻帮队友上游，必要时拆牌送队友。
+   - 首攻：有王打一张、无王打一夯、情况不明对子先行；想上游小单
+     起步、做下游对顺起步；双上供之后出单张。
+   - 跟牌：轻易不接对门牌、传牌必接、顶住上家、吊住下家；牌型
+     不对、炸弹面对。
+   - 炸弹：炸九不炸十、炸七不炸八、炸五不炸四（对手剩 9/7/5 张
+     时不轻易炸，残局例外）；炸弹留到后段用，尾盘炸弹多者有发
+     言权；轻易不拆炸弹、轻易不组顺。
+   - 控牌：谁打谁收、最小牌先出；下家剩 2 张拆小对打单张，剩 5
+     张打对、打 3、打高单；强牌弱打、弱牌强打；记大牌算牌。
+   - 配合：边打边救、顺子打到头；手数少比牌面花哨更容易赢。 */
+var playedLog = []; // every card played this hand, for 算牌 (reset in newHand)
+
+function teamMate(seat){ return (seat + 2) % 4; }
+function nextOppAfter(seat){ // 下家 side: next active opponent in play order
+  for (var i = 1; i <= 3; i++){
+    var s = (seat + i) % 4;
+    if (!players[s].finished && teamOf(s) !== teamOf(seat)) return s;
+  }
+  return -1;
+}
+function prevOpp(seat){ // 上家： the active opponent who plays just before this seat
+  for (var i = 1; i <= 3; i++){
+    var s = (seat + 4 - i) % 4;
+    if (!players[s].finished && teamOf(s) !== teamOf(seat)) return s;
+  }
+  return -1;
+}
+function powerCounts(cards){
+  var m = {};
+  cards.forEach(function(c){ var pw = cardPower(c); m[pw] = (m[pw] || 0) + 1; });
+  return m;
+}
+function absoluteTopSingle(hand){
+  // 算牌： the highest single in hand that no unseen card can beat —
+  // the card that lets the bot take a trick back （谁打谁收）.
+  var mine = powerCounts(hand), seen = powerCounts(playedLog);
+  var best = 0;
+  for (var pw = 2; pw <= 17; pw++){
+    if (!mine[pw]) continue;
+    var ok = true;
+    for (var hi = pw + 1; hi <= 17; hi++){
+      var total = hi >= 16 ? 2 : 8; // per double deck: jokers x2, ranks x8
+      if (total - (mine[hi] || 0) - (seen[hi] || 0) > 0){ ok = false; break; }
+    }
+    if (ok && pw > best) best = pw;
+  }
+  return best;
+}
+function assessHand(seat){
+  // 估牌力： decided once per hand and cached on the player object
+  // (players are rebuilt every newHand, so the cache is per-hand).
   var p = players[seat];
+  if (p._role) return p._role;
   var hand = p.hand;
   var combos = genCombos(hand);
-  var cur = currentPlay ? currentPlay.combo : null;
+  var bombs = 0;
+  combos.forEach(function(x){ if (isBombCombo(x.combo)) bombs++; });
+  var big = 0, wilds = 0;
+  hand.forEach(function(c){
+    if (isWild(c)) wilds++;
+    if (cardPower(c) >= 13) big++; // K / A / level cards / jokers
+  });
+  var byRank = {};
+  hand.forEach(function(c){ if (!c.joker) byRank[c.rank] = (byRank[c.rank] || 0) + 1; });
+  var structured = 0, loose = 0;
+  Object.keys(byRank).forEach(function(k){
+    var n = byRank[k];
+    if (n >= 2) structured += n;
+    else if (rankPower(parseInt(k, 10)) < 13) loose++;
+  });
+  var score = bombs * 4 + big + wilds * 1.5 + structured * 0.3 - loose * 0.8;
+  p._role = score >= 11 ? "main" : "assist";
+  return p._role;
+}
+function movesAfter(combos, hand, playCards){
+  // Rough count of plays needed to shed the rest of the hand after
+  // playing playCards — fewer remaining 手数 beats a prettier hand.
+  var used = {};
+  playCards.forEach(function(c){ used[c.id] = true; });
+  var covered = playCards.length, moves = 1;
+  var sorted = combos.filter(function(x){ return x.cards.length >= 2; })
+    .sort(function(a, b){ return b.cards.length - a.cards.length; });
+  for (var i = 0; i < sorted.length; i++){
+    var x = sorted[i];
+    if (x.cards.some(function(c){ return used[c.id]; })) continue;
+    x.cards.forEach(function(c){ used[c.id] = true; });
+    moves++; covered += x.cards.length;
+  }
+  return moves + (hand.length - covered);
+}
+function breaksBomb(hand, x){
+  if (isBombCombo(x.combo)) return false;
+  var byRank = {};
+  hand.forEach(function(c){ if (!c.joker && !isWild(c)) byRank[c.rank] = (byRank[c.rank] || 0) + 1; });
+  return x.cards.some(function(c){ return !c.joker && !isWild(c) && byRank[c.rank] >= 4; });
+}
+function usesWild(x){ return x.cards.some(function(c){ return isWild(c); }); }
+function holdsBiggerSameType(combos, x){
+  return combos.some(function(y){
+    if (y === x || isBombCombo(y.combo)) return false;
+    if (y.combo.type !== x.combo.type || y.combo.len !== x.combo.len) return false;
+    if (y.combo.mainKey <= x.combo.mainKey) return false;
+    return !y.cards.some(function(c){ return x.cards.indexOf(c) >= 0; });
+  });
+}
+function smallestOf(list){
+  if (!list.length) return null;
+  return list.slice().sort(function(a, b){ return a.combo.mainKey - b.combo.mainKey; })[0];
+}
+function aiLead(seat, combos){
+  var p = players[seat], hand = p.hand;
+  var role = assessHand(seat);
+  var partner = teamMate(seat);
+  var nonBomb = combos.filter(function(x){ return !isBombCombo(x.combo); });
+  var byType = function(t){ return nonBomb.filter(function(x){ return x.combo.type === t; }); };
 
-  if (!cur){
-    var order = ["straight", "pairs", "trios", "fullhouse", "trio", "pair", "single"];
-    for (var oi = 0; oi < order.length; oi++){
-      var cands = combos.filter(function(x){ return x.combo.type === order[oi] && !isBombCombo(x.combo); });
-      if (!cands.length) continue;
-      cands.sort(function(a, b){ return a.combo.mainKey - b.combo.mainKey || b.cards.length - a.cards.length; });
-      var pick = cands[0];
-      if (order[oi] === "single" && pick.combo.mainKey >= 15 && hand.length > 6){
-        var low = combos.filter(function(x){ return !isBombCombo(x.combo); })
-          .sort(function(a, b){ return a.combo.mainKey - b.combo.mainKey; })[0];
-        if (low) return low;
-      }
-      return pick;
-    }
-    var any = combos.filter(function(x){ return !isBombCombo(x.combo); })
-      .sort(function(a, b){ return a.combo.mainKey - b.combo.mainKey; })[0];
-    return any || combos[0] || null;
+  // going out in one play is always right
+  var fin = combos.filter(function(x){ return x.cards.length === hand.length; });
+  if (fin.length){
+    fin.sort(function(a, b){ return (isBombCombo(a.combo) ? 1 : 0) - (isBombCombo(b.combo) ? 1 : 0); });
+    return fin[0];
+  }
+  if (!nonBomb.length){ // nothing but bombs left: lead the smallest
+    return combos.slice().sort(function(a, b){ return a.combo.bombScore - b.combo.bombScore; })[0] || null;
   }
 
+  var down = nextOppAfter(seat);
+  var downCards = down >= 0 ? players[down].hand.length : 99;
+
+  // 送牌： partner plays next and is about to finish — feed something tiny
+  if (!players[partner].finished && players[partner].hand.length <= 3 && nextActiveAfter(seat) === partner){
+    var feed = smallestOf(byType("single")) || smallestOf(byType("pair"));
+    if (feed) return feed;
+  }
+  // 下家剩 2 张：拆小对打单张 — never hand them a pair/sequence to ride out on
+  if (downCards === 2){
+    var singles = byType("single");
+    if (singles.length){
+      var fromPair = singles.filter(function(x){
+        var k = keyOf(x.cards[0]);
+        return hand.filter(function(c){ return !isWild(c) && keyOf(c) === k; }).length >= 2;
+      });
+      return smallestOf(fromPair.length ? fromPair : singles);
+    }
+  }
+  // 下家剩 5 张：打对、打 3、打高单
+  if (downCards === 5){
+    var pr5 = smallestOf(byType("pair")); if (pr5) return pr5;
+    var tr5 = smallestOf(byType("trio")); if (tr5) return tr5;
+    var hi5 = byType("single").filter(function(x){ return x.combo.mainKey >= 13; });
+    if (hi5.length) return smallestOf(hi5);
+  }
+  // 开局首攻 (nothing played yet this hand)
+  if (!playedLog.length){
+    if (tributeState && tributeState.exchanges.length > 1){
+      var ds = smallestOf(byType("single")); if (ds) return ds; // 双上供之后出单张
+    }
+    var hasJoker = hand.some(function(c){ return c.joker > 0; });
+    if (hasJoker){
+      var sj = smallestOf(byType("single")); if (sj) return sj; // 有王打一张
+    } else {
+      var fh = smallestOf(byType("fullhouse")); if (fh) return fh; // 无王打一夯
+    }
+    if (role === "assist"){ // 做下游：对顺起步
+      var sq = smallestOf(byType("pairs")) || smallestOf(byType("straight"));
+      if (sq) return sq;
+    }
+    var pr = smallestOf(byType("pair")); if (pr) return pr; // 情况不明，对子先行
+    var s0 = smallestOf(byType("single")); if (s0) return s0;
+  }
+  // General lead: shed structure, keep control （谁打谁收）, don't feed
+  // 下家 a small single we cannot take back （吊下家）, prefer the play
+  // that leaves the fewest remaining 手数.
+  var topSingle = absoluteTopSingle(hand);
+  var hasBomb = combos.some(function(x){ return isBombCombo(x.combo); });
+  var canRetakeSingle = topSingle > 0 || hasBomb;
+  var best = null, bestScore = Infinity;
+  nonBomb.forEach(function(x){
+    var s = movesAfter(combos, hand, x.cards) * 10;
+    s += x.combo.mainKey * 0.15;                                      // 最小牌先出
+    if (holdsBiggerSameType(combos, x)) s -= 4;                       // 谁打谁收
+    if (x.combo.type === "single" && canRetakeSingle) s -= 4;
+    if (x.combo.type === "straight") s -= (x.cards.length - 5) * 1.5; // 顺子打到头
+    if (usesWild(x)) s += 3;                                          // 留着逢人配
+    if (breaksBomb(hand, x)) s += 8;                                  // 轻易不拆炸弹组顺
+    if (x.combo.type === "single" && x.combo.mainKey < 10 && downCards <= 5 && !canRetakeSingle) s += 6; // 吊下家
+    if (role === "assist"){
+      if (x.combo.type === "single") s += 2;
+      if (x.combo.type === "pair" || x.combo.type === "straight" || x.combo.type === "pairs") s -= 1.5;
+    } else if (x.combo.type === "single" && canRetakeSingle){
+      s -= 2;                                                         // 主攻：小单起步探路
+    }
+    if (hand.length <= 8) s -= x.cards.length * 1.2;                  // 残局先减手数
+    if (s < bestScore){ bestScore = s; best = x; }
+  });
+  return best || nonBomb[0];
+}
+function aiFollow(seat, combos){
+  var p = players[seat], hand = p.hand;
+  var cur = currentPlay.combo;
+  var winner = currentPlay.seat;
+  var partner = teamMate(seat);
+  var role = assessHand(seat);
   var resp = combos.filter(function(x){ return beats(x.combo, cur); });
   if (!resp.length) return null;
-  var partnerWinning = currentPlay.seat === (seat + 2) % 4;
-  var finishes = resp.filter(function(x){ return x.cards.length === hand.length; });
-  if (partnerWinning && !finishes.length){
-    if (isBombCombo(cur) || cur.mainKey >= 13) return null; // let partner keep it
+  // going out is always right, bomb or not
+  var fin = resp.filter(function(x){ return x.cards.length === hand.length; });
+  if (fin.length){
+    fin.sort(function(a, b){
+      return (isBombCombo(a.combo) ? 1 : 0) - (isBombCombo(b.combo) ? 1 : 0) || a.combo.bombScore - b.combo.bombScore;
+    });
+    return fin[0];
   }
   var nonBomb = resp.filter(function(x){ return !isBombCombo(x.combo); });
-  nonBomb.sort(function(a, b){ return a.combo.mainKey - b.combo.mainKey || b.cards.length - a.cards.length; });
-  if (nonBomb.length) return nonBomb[0];
-  var oppNext = nextActiveAfter(seat);
-  var oppDanger = players[oppNext].hand.length <= 2 && oppNext !== (seat + 2) % 4;
-  resp.sort(function(a, b){ return a.combo.bombScore - b.combo.bombScore; });
-  if (finishes.length || isBombCombo(cur) || oppDanger || hand.length <= 5) return resp[0];
-  return null;
+  var bombs = resp.filter(function(x){ return isBombCombo(x.combo); })
+    .sort(function(a, b){ return a.combo.bombScore - b.combo.bombScore; });
+
+  if (winner === partner){
+    // ---- partner is on top ----
+    if (isBombCombo(cur) || !nonBomb.length) return null; // never top partner's bomb, never bomb partner
+    var take = smallestOf(nonBomb);
+    var canControl = holdsBiggerSameType(combos, take) || absoluteTopSingle(hand) > 0 ||
+      combos.some(function(x){ return isBombCombo(x.combo); });
+    // partner LED this trick if nobody else has played a card in it
+    var partnerLed = Object.keys(lastPlays).every(function(k){
+      return parseInt(k, 10) === partner || lastPlays[k] === "pass";
+    });
+    if (partnerLed){
+      // 传牌必接： partner led this trick, so holding any legal
+      // beating play means we MUST take it over — with the
+      // smallest card that beats partner's lead. Whether we can
+      // control what follows (canControl) or are the main hand
+      // (role) never decides WHETHER to take, only how the take
+      // is sized elsewhere; here the take is always the cheapest
+      // beating play, even for a weak assist hand.
+      return take;
+    }
+    // partner took the trick off an opponent: 轻易不接对门牌 — only
+    // step in when it sets up going out on the next lead （边打边救）
+    if (canControl && movesAfter(combos, hand, take.cards) <= 1) return take;
+    return null;
+  }
+
+  // ---- an opponent is on top ----
+  var winnerCards = players[winner].hand.length;
+  var fromUp = winner === prevOpp(seat);          // 上家's play （顶住上家）
+  var lastBlock = winner === nextOppAfter(seat);  // 下家's play: we are the last who can stop it
+  var desperate = winnerCards <= 2;               // they may go out on their next lead
+  if (nonBomb.length){
+    var cands = nonBomb.slice().sort(function(a, b){
+      return a.combo.mainKey - b.combo.mainKey || b.cards.length - a.cards.length;
+    });
+    var clean = cands.filter(function(x){ return !usesWild(x) && !breaksBomb(hand, x); });
+    var pick = (clean.length ? clean : cands)[0];
+    // Don't burn the absolute top card (joker / level single) just to
+    // win a cheap trick early: 强牌弱打 keeps it in reserve, 弱牌强打
+    // spends it to seize the chance.
+    var burnsTop = pick.combo.mainKey >= 15 && cur.mainKey <= 12;
+    if (burnsTop && !desperate && winnerCards > 5){
+      if (role === "main" && !(fromUp && winnerCards <= 6)) return null;
+      if (cands.length > 1) pick = cands[1];
+      else if (!fromUp && !lastBlock) return null;
+    }
+    // 上家's small play, partner still to act after 下家： an assist
+    // hand lets partner try instead of spending its own big cards
+    if (fromUp && !desperate && role === "assist" && cur.mainKey < 10 &&
+        pick.combo.mainKey >= 13 && !players[partner].finished){
+      return null;
+    }
+    return pick;
+  }
+  // ---- no same-type answer: bomb it or let it go （牌型不对、炸弹面对） ----
+  if (!bombs.length) return null;
+  var totalLeft = 0;
+  players.forEach(function(q){ if (!q.finished) totalLeft += q.hand.length; });
+  if (desperate || (lastBlock && winnerCards <= 3)) return bombs[0]; // stop them going out
+  if (isBombCombo(cur)){
+    // bomb back only to stop a run or when nearly out ourselves —
+    // otherwise keep a bomb for the endgame （尾盘炸弹多者有发言权）
+    if (winnerCards <= 4 || hand.length <= 6) return bombs[0];
+    return null;
+  }
+  // 炸九不炸十、炸七不炸八、炸五不炸四： hold the bomb at these
+  // counts unless our own hand is already in its endgame sprint
+  if ((winnerCards === 9 || winnerCards === 7 || winnerCards === 5) && hand.length > 5) return null;
+  if (winnerCards <= 4) return bombs[0];                                // they're nearly out: take the trick
+  if (movesAfter(combos, hand, bombs[0].cards) <= 1) return bombs[0];   // the bomb opens our own finish
+  if (totalLeft <= 30 && (role === "main" || hand.length <= 8)) return bombs[0]; // 尾盘： bombs speak
+  return null; // otherwise keep the bomb for the endgame — but do use it
+}
+function aiChoose(seat){
+  var combos = genCombos(players[seat].hand);
+  if (!currentPlay) return aiLead(seat, combos);
+  return aiFollow(seat, combos);
 }
 
 /* ================= game state ================= */
@@ -709,7 +970,7 @@ var botTimer = null;
 var lastLogHtml = "";
 var lastEndInfo = null;
 /* tribute (进贡/还贡) state */
-var pendingTributePlan = null; // plan for the NEXT hand, computed at endHand: {double, pairs:[{from,to}]}
+var pendingTributePlan = null; // plan for the NEXT hand, computed at endHand: single {pairs:[{from,to}]} or double {givers, receivers} (pairing decided in beginTribute by tribute-card size)
 var tributeActive = false;     // a tribute exchange is waiting on a human 还贡
 var tributeState = null;       // {leader, exchanges:[{from,to,give,ret,done}]}
 var tributeAntiNote = "";      // 抗贡 explanation folded into the new-hand log
@@ -752,6 +1013,7 @@ function newMatch(){
 function newHand(){
   clearTimeout(botTimer);
   lastEndInfo = null;
+  playedLog = [];
   tributeState = null;
   tributeActive = false;
   tributeAntiNote = "";
@@ -786,7 +1048,7 @@ function newHand(){
   // human's 还贡 pick).
   var plan = pendingTributePlan;
   pendingTributePlan = null;
-  if (plan && plan.pairs && plan.pairs.length && beginTribute(plan)){
+  if (plan && beginTribute(plan)){
     if (tributeActive) render();
     return;
   }
@@ -798,8 +1060,10 @@ function newHand(){
 /* ================= tribute （进贡 / 还贡 / 抗贡） =================
    Decided by the previous hand's finishing order:
    - 末游 (4th) gives their biggest card to 头游 (1st).
-   - If the losing team took both 3rd and 4th （双下）, 三游 also gives
-     their biggest card to 二游 — both losers 上供.
+   - If the losing team took both 3rd and 4th （双下）, both losers
+     上供： their two tribute cards are compared — the bigger one goes
+     to 头游， the smaller one to 二游， and each receiver returns a
+     card to the giver they received from.
    - 抗贡： the givers hold a pair of big jokers between them — one
      player holding both, or (double tribute) one each — nobody gives.
    - The tribute card is the giver's biggest card EXCLUDING the heart
@@ -809,9 +1073,13 @@ function newHand(){
      on 抗贡 the 头游 leads as usual. */
 function computeTributePlan(order){
   var first = order[0], second = order[1], third = order[2], fourth = order[3];
-  if (teamOf(first) === teamOf(second))
-    return { double: true, pairs: [{ from: fourth, to: first }, { from: third, to: second }] };
-  return { double: false, pairs: [{ from: fourth, to: first }] };
+  if (teamOf(first) === teamOf(second)){
+    // 双下： both losers give. Who gives to 头游 is NOT fixed here —
+    // beginTribute compares the two tribute cards: the bigger one
+    // goes to 头游， the smaller to 二游.
+    return { double: true, givers: [fourth, third], receivers: [first, second], leader: fourth };
+  }
+  return { double: false, pairs: [{ from: fourth, to: first }], leader: fourth };
 }
 function countBigJokers(hand){
   return hand.filter(function(c){ return c.joker === 2; }).length;
@@ -833,40 +1101,70 @@ function isReturnEligible(c, hand){
 function pickReturnCard(hand){
   var elig = hand.filter(function(c){ return isReturnEligible(c, hand); });
   if (!elig.length) elig = hand.slice();
-  var best = elig[0];
-  elig.forEach(function(c){ if (cardPower(c) < cardPower(best)) best = c; });
+  // 还贡 is always paid to an opponent: hand back a loose single when
+  // possible — it costs none of our own pair/trio structure, and a
+  // stray small card is the least useful gift. Otherwise the smallest.
+  var byRank = {};
+  hand.forEach(function(c){ if (!c.joker) byRank[c.rank] = (byRank[c.rank] || 0) + 1; });
+  var loose = elig.filter(function(c){ return !c.joker && byRank[c.rank] === 1; });
+  var pool = loose.length ? loose : elig;
+  var best = pool[0];
+  pool.forEach(function(c){ if (cardPower(c) < cardPower(best)) best = c; });
   return best;
 }
 function cardNameHtml(c){
   if (c.joker) return c.joker === 2 ? "大王" : "小王";
   return SUITS[c.suit] + " " + RANK_LABEL[c.rank];
 }
+function tributeGivers(plan){
+  if (plan.double) return plan.givers.slice();
+  return plan.pairs.map(function(pr){ return pr.from; });
+}
 function beginTribute(plan){
   // 抗贡 check: a pair of big jokers among the giver(s) cancels it all
+  var giverSeats = tributeGivers(plan);
   var bigTotal = 0, pairHolder = -1;
-  plan.pairs.forEach(function(pr){
-    var n = countBigJokers(players[pr.from].hand);
+  giverSeats.forEach(function(s){
+    var n = countBigJokers(players[s].hand);
     bigTotal += n;
-    if (n >= 2) pairHolder = pr.from;
+    if (n >= 2) pairHolder = s;
   });
   if (bigTotal >= 2){
     if (pairHolder >= 0){
       tributeAntiNote = "抗贡！<b>" + escapeHtml(players[pairHolder].name) + "</b> 手握两张大王，凑成一对大王，本局不用上供。";
     } else {
-      var givers = plan.pairs.map(function(pr){ return "<b>" + escapeHtml(players[pr.from].name) + "</b>"; }).join("和");
+      var givers = giverSeats.map(function(s){ return "<b>" + escapeHtml(players[s].name) + "</b>"; }).join("和");
       tributeAntiNote = "抗贡！" + givers + " 各有一张大王，合起来一对大王，本局不用上供。";
     }
     return false; // normal start, 头游 leads
   }
-  tributeState = { leader: plan.pairs[0].from, exchanges: [] };
-  plan.pairs.forEach(function(pr){
-    var giver = players[pr.from];
-    var card = pickTributeCard(giver.hand);
-    giver.hand = giver.hand.filter(function(c){ return c.id !== card.id; });
-    var recv = players[pr.to];
-    recv.hand.push(card);
+  // Pair givers with receivers. Single tribute: 末游 → 头游. Double
+  // tribute （双下）: each giver's biggest card is picked first and the
+  // two are compared — the giver whose tribute card is bigger gives to
+  // 头游， the smaller one to 二游， and each receiver's 还贡 goes back
+  // to the giver they received from. (Equal cards: 末游 gives to 头游.)
+  var exchanges = [];
+  if (plan.double){
+    var picked = giverSeats.map(function(s){
+      return { from: s, card: pickTributeCard(players[s].hand) };
+    });
+    var big = picked[0], small = picked[1];
+    if (cardPower(picked[1].card) > cardPower(picked[0].card)){ big = picked[1]; small = picked[0]; }
+    exchanges.push({ from: big.from, to: plan.receivers[0], card: big.card });
+    exchanges.push({ from: small.from, to: plan.receivers[1], card: small.card });
+  } else {
+    plan.pairs.forEach(function(pr){
+      exchanges.push({ from: pr.from, to: pr.to, card: pickTributeCard(players[pr.from].hand) });
+    });
+  }
+  tributeState = { leader: plan.leader != null ? plan.leader : exchanges[0].from, exchanges: [] };
+  exchanges.forEach(function(ex){
+    var giver = players[ex.from];
+    giver.hand = giver.hand.filter(function(c){ return c.id !== ex.card.id; });
+    var recv = players[ex.to];
+    recv.hand.push(ex.card);
     sortHand(recv.hand);
-    tributeState.exchanges.push({ from: pr.from, to: pr.to, give: card, ret: null, done: false });
+    tributeState.exchanges.push({ from: ex.from, to: ex.to, give: ex.card, ret: null, done: false });
   });
   // robot receivers hand their 还贡 back right away; human receivers
   // pick theirs (host/solo locally, guests through the host)
@@ -939,6 +1237,7 @@ function applyPlay(seat, cards){
   var ids = {};
   cards.forEach(function(c){ ids[c.id] = true; });
   p.hand = p.hand.filter(function(c){ return !ids[c.id]; });
+  cards.forEach(function(c){ playedLog.push(c); }); // 算牌： remember every card that hits the table
   currentPlay = { seat: seat, cards: cards.slice(), combo: combo };
   lastPlays = {}; lastPlays[seat] = { cards: cards.slice(), combo: combo };
   passesSincePlay = 0;
@@ -1006,9 +1305,9 @@ function endHand(){
   if (pendingTributePlan){
     var nm = function(s){ return players[s].name; };
     if (pendingTributePlan.double){
-      tributeNote = "下一局双上供：末游 " + nm(finishOrder[3]) + " 进贡给头游 " + nm(finishOrder[0]) +
-        "，三游 " + nm(finishOrder[2]) + " 进贡给二游 " + nm(finishOrder[1]) +
-        "（进贡方凑齐一对大王可抗贡）。";
+      tributeNote = "下一局双上供：末游 " + nm(finishOrder[3]) + " 和三游 " + nm(finishOrder[2]) +
+        " 各进贡自己最大的牌，两张比大小——大的贡给头游 " + nm(finishOrder[0]) +
+        "、小的贡给二游 " + nm(finishOrder[1]) + "，收贡的再对应还牌（进贡方凑齐一对大王可抗贡）。";
     } else {
       tributeNote = "下一局末游 " + nm(finishOrder[3]) + " 进贡最大的牌给头游 " + nm(finishOrder[0]) +
         "（凑齐一对大王可抗贡）。";
