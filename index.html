@@ -158,7 +158,7 @@
       .seat.s3{ left:8px; top:50%; transform:translateY(-50%); }
       .backs{ display:flex; }
       .backs i{
-        width:16px; height:24px; border-radius:3px; margin-left:-9px; display:block;
+        width:19px; height:28px; border-radius:3px; margin-left:-10px; display:block;
         background:repeating-linear-gradient(45deg,#8c1d18 0 4px,#a52a21 4px 8px);
         border:1px solid rgba(255,255,255,.65);
       }
@@ -188,24 +188,24 @@
       .center-note.big b{ color:#ffe9a8; }
       /* ---------- cards ---------- */
       .card{
-        position:relative; flex:0 0 auto; width:52px; height:74px; border-radius:8px;
+        position:relative; flex:0 0 auto; width:60px; height:86px; border-radius:9px;
         background:var(--card-bg); color:var(--card-ink); border:1px solid #cbbf9f;
-        box-shadow:0 2px 6px rgba(0,0,0,.28); padding:5px 6px; user-select:none; -webkit-user-select:none;
+        box-shadow:0 2px 6px rgba(0,0,0,.28); padding:6px 7px; user-select:none; -webkit-user-select:none;
       }
-      .card .rk{ font-size:19px; font-weight:800; line-height:1; display:block; }
-      .card .st{ font-size:16px; line-height:1.15; display:block; }
+      .card .rk{ font-size:22px; font-weight:800; line-height:1; display:block; }
+      .card .st{ font-size:18px; line-height:1.15; display:block; }
       .card.red{ color:var(--red); }
-      .card.joker .rk{ font-size:15px; letter-spacing:.08em; writing-mode:vertical-rl; margin:0 auto; }
+      .card.joker .rk{ font-size:17px; letter-spacing:.08em; writing-mode:vertical-rl; margin:0 auto; }
       .card.joker-big{ color:var(--red); }
       .card .wildtag{
         position:absolute; right:-5px; top:-7px; background:var(--gold); color:#241a00;
         font-size:11px; font-weight:800; border-radius:999px; padding:1px 6px; box-shadow:0 1px 4px rgba(0,0,0,.35);
       }
-      .card.mini{ width:32px; height:46px; border-radius:5px; padding:3px 4px; margin-left:-14px; }
+      .card.mini{ width:38px; height:54px; border-radius:6px; padding:4px 5px; margin-left:-17px; }
       .card.mini:first-child{ margin-left:0; }
-      .card.mini .rk{ font-size:13px; }
-      .card.mini .st{ font-size:11px; }
-      .card.mini.joker .rk{ font-size:10px; }
+      .card.mini .rk{ font-size:15px; }
+      .card.mini .st{ font-size:13px; }
+      .card.mini.joker .rk{ font-size:12px; }
       .card.mini .wildtag{ font-size:9px; padding:0 4px; right:-4px; top:-5px; }
       /* ---------- hand & actions ---------- */
       .log{
@@ -222,7 +222,7 @@
       .hand{ display:block; }
       .handrow{ display:flex; }
       .handrow + .handrow{ margin-top:14px; }
-      .hand .card{ margin-left:-25px; cursor:pointer; transition:transform .12s ease; touch-action:none; }
+      .hand .card{ margin-left:-28px; cursor:pointer; transition:transform .12s ease; touch-action:none; }
       .hand .card:first-child{ margin-left:0; }
       .hand .card.dragging{ transition:none; z-index:30; cursor:grabbing; box-shadow:0 14px 26px rgba(0,0,0,.45); }
       .hand .card.dropmark{ box-shadow:-4px 0 0 0 var(--gold), 0 2px 6px rgba(0,0,0,.28); }
@@ -263,10 +263,10 @@
       .foot{ margin-top:14px; font-size:13px; color:var(--ink-soft); line-height:1.7; }
       @media (max-width:560px){
         .table{ min-height:424px; border-width:7px; border-radius:20px; }
-        .card{ width:45px; height:65px; }
-        .card .rk{ font-size:16px; }
-        .card .st{ font-size:14px; }
-        .hand .card{ margin-left:-23px; }
+        .card{ width:52px; height:74px; }
+        .card .rk{ font-size:19px; }
+        .card .st{ font-size:16px; }
+        .hand .card{ margin-left:-25px; }
         .slot.p1{ right:96px; } .slot.p3{ left:96px; }
         .slot.p0{ bottom:124px; } .slot.p2{ top:124px; }
         .seat{ min-width:70px; } .seat .avatar{ width:40px; height:40px; font-size:19px; }
@@ -2500,7 +2500,17 @@ function applySnapshot(s){
   for (var k in lp) lastPlays[(parseInt(k, 10) - my + 4) % 4] = lp[k];
   passesSincePlay = 0;
   viewSeat = 0;
-  if (turn !== 0) selected = {};
+  // Keep the local pick across snapshots: the hand is rebuilt with the
+  // same card ids, so only ids that have actually left the hand are
+  // dropped. Wiping the whole pick on every snapshot broke 还贡 for
+  // the 二游 guest — during the tribute phase the host's turn points
+  // at the 头游, so the 二游's remapped turn is never 0, and the
+  // first broadcast after they tapped a card (the 头游's own return,
+  // a resync, a sort) silently unpicked it and greyed out the return
+  // button: they had received the tribute card but could not return.
+  var inHandNow = {};
+  players[0].hand.forEach(function(c){ inHandNow[c.id] = true; });
+  Object.keys(selected).forEach(function(id){ if (!inHandNow[id]) delete selected[id]; });
   // keep the lobby name list in sync (absolute seats -> rotate not needed for names list UI)
   lobbyNames = [null, null, BOT_NAME, null];
   for (var a2 = 0; a2 < 4; a2++) lobbyNames[a2] = sanitizeName(s.players[a2].name);
