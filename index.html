@@ -369,7 +369,7 @@
         </ul>
         <h3>牌型</h3>
         <ul>
-          <li>单张、对子、三张、三带二、顺子（5 张起）、连对（正好 3 对）、钢板（2 个连续三张起）。</li>
+          <li>单张、对子、三张、三带二、顺子（正好 5 张）、连对（正好 3 对）、钢板（2 个连续三张起）。</li>
           <li>炸弹：4 张以上同点；同花顺按 5 张炸弹算，大于 5 张炸弹、小于 6 张炸弹；四张王是「四大天王」，最大。</li>
           <li>管牌必须同牌型、同长度比大小；炸弹可以管任何普通牌型。</li>
         </ul>
@@ -519,8 +519,9 @@ function analyze(cards){
     return best;
   }
 
-  // straight flush (bomb family)
-  var st = seqCheck(1, 5);
+  // straight flush (bomb family) — a straight is exactly 5 cards,
+  // never longer; 6+ consecutive singles are not a legal play.
+  var st = seqCheck(1, 5, 5);
   if (st){
     var suits = {};
     nw.forEach(function(x){ suits[x.suit] = true; });
@@ -639,8 +640,8 @@ function genCombos(hand){
       }
     }
   }
-  seqGen(1, 5, 10, false);
-  seqGen(1, 5, 10, true);
+  seqGen(1, 5, 5, false);
+  seqGen(1, 5, 5, true);
   seqGen(2, 3, 3, false);
   seqGen(3, 2, 4, false);
   return out;
