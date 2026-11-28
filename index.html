@@ -134,6 +134,21 @@
       @media (max-width:560px){
         .hand-banner .lead{ margin-left:0; }
       }
+      /* ---------- tribute (进贡/还贡) bar ---------- */
+      .tribute-bar{
+        display:none; background:var(--panel); border:2px solid var(--gold); border-radius:16px;
+        padding:12px 16px; margin-bottom:12px; box-shadow:var(--shadow);
+      }
+      .tribute-bar.show{ display:block; }
+      .tribute-bar h3{ margin:0 0 8px; font-size:17px; }
+      .tribute-bar .exline{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:6px 0; font-size:15px; }
+      .tribute-bar .exline .cardsrow{ display:flex; }
+      .tribute-bar .wait{ color:var(--ink-soft); font-size:14px; }
+      .tribute-bar .myturn{
+        margin-top:10px; padding-top:10px; border-top:1px dashed var(--line);
+        display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:15px;
+      }
+      .tribute-bar .myturn .btn{ min-height:44px; }
       .seat .nm{ font-weight:700; font-size:14px; text-shadow:0 1px 3px rgba(0,0,0,.5); }
       .seat .meta{ font-size:12px; opacity:.92; text-shadow:0 1px 2px rgba(0,0,0,.5); }
       .seat .fin{ background:var(--gold); color:#241a00; border-radius:999px; padding:1px 9px; font-weight:800; font-size:12px; }
@@ -327,6 +342,8 @@
 
       <p class="log" id="log"></p>
 
+      <div class="tribute-bar" id="tributeBar"></div>
+
       <div class="handzone">
         <div class="handhead">
           <span class="who" id="handWho"></span>
@@ -359,8 +376,16 @@
         <h3>升级</h3>
         <ul>
           <li>一局里先出完的是头游。头游的队友是二游，两队友包揽前两名叫「双下」，胜方升 3 级；队友第三名升 2 级；队友最后一名升 1 级。</li>
-          <li>下一局打胜方的级数，由头游先出牌。先打过 A 的一队赢下整场。</li>
-          <li>本桌省去了进贡/还贡环节，开局直接打。</li>
+          <li>下一局打胜方的级数。先打过 A 的一队赢下整场。</li>
+        </ul>
+        <h3>进贡 / 还贡</h3>
+        <ul>
+          <li>每局开打前先上供：末游（最后一名）把自己<b>最大的牌</b>进贡给头游（第一名）。</li>
+          <li>如果输的一队包揽第三、第四名（被双下），两个人都要上供：末游贡给头游，三游贡给二游。</li>
+          <li>抗贡：进贡的人凑齐<b>一对大王</b>就不用上供——一个人手里有两张大王，或者双上供时两个人各有一张大王、合起来一对，都算抗贡。</li>
+          <li>选进贡牌时，红桃级牌（逢人配）不算在内，不用拿它上供；除它之外最大的那张就是进贡牌。</li>
+          <li>收到进贡的人要还一张牌（还贡）：只能还 <b>10 及以下</b>的小牌（大小王、级牌、逢人配不能还）。</li>
+          <li>还贡完成后，由进贡的末游先出牌；抗贡的局由头游先出牌。</li>
         </ul>
       </div>
 
@@ -683,6 +708,11 @@ var starterSeat = 0;      // local-view seat that leads the first trick of this 
 var botTimer = null;
 var lastLogHtml = "";
 var lastEndInfo = null;
+/* tribute (进贡/还贡) state */
+var pendingTributePlan = null; // plan for the NEXT hand, computed at endHand: {double, pairs:[{from,to}]}
+var tributeActive = false;     // a tribute exchange is waiting on a human 还贡
+var tributeState = null;       // {leader, exchanges:[{from,to,give,ret,done}]}
+var tributeAntiNote = "";      // 抗贡 explanation folded into the new-hand log
 
 function isBotSeat(seat){
   if (mode === "solo") return seat !== 0;
@@ -714,11 +744,17 @@ function newMatch(){
   teamLevel = [2, 2];
   levelRank = 2;
   firstLeader = 0;
+  pendingTributePlan = null;
+  tributeState = null;
+  tributeActive = false;
   newHand();
 }
 function newHand(){
   clearTimeout(botTimer);
   lastEndInfo = null;
+  tributeState = null;
+  tributeActive = false;
+  tributeAntiNote = "";
   var deck = shuffle(buildDeck());
   players = [];
   for (var s = 0; s < 4; s++){
@@ -740,10 +776,156 @@ function newHand(){
   passesSincePlay = 0;
   finishOrder = [];
   selected = {};
-  handActive = true;
+  handActive = false;
   viewSeat = 0;
-  setLog("新一局开始！本局打 <b>" + RANK_LABEL[levelRank] + "</b> —— " + RANK_LABEL[levelRank] + " 是级牌，比 A 还大（只有大小王比它大），红桃 " + RANK_LABEL[levelRank] + " 是逢人配。由 <b>" + escapeHtml(players[turn].name) + "</b> 先出牌（座位上有「先出」标记）。");
+  // 进贡/还贡 comes before the first trick: last hand's loser(s) give
+  // their biggest card (逢人配 excluded) to the winner(s), who return a
+  // card of 10 or below — unless the givers can 抗贡 with a pair of big
+  // jokers. beginTribute returns true when it has taken over the start
+  // of the hand (exchange finished and play begun, or waiting on a
+  // human's 还贡 pick).
+  var plan = pendingTributePlan;
+  pendingTributePlan = null;
+  if (plan && plan.pairs && plan.pairs.length && beginTribute(plan)){
+    if (tributeActive) render();
+    return;
+  }
+  handActive = true;
+  setLog((tributeAntiNote ? tributeAntiNote + " " : "") + "新一局开始！本局打 <b>" + RANK_LABEL[levelRank] + "</b> —— " + RANK_LABEL[levelRank] + " 是级牌，比 A 还大（只有大小王比它大），红桃 " + RANK_LABEL[levelRank] + " 是逢人配。由 <b>" + escapeHtml(players[turn].name) + "</b> 先出牌（座位上有「先出」标记）。");
   startTurn(true);
+}
+
+/* ================= tribute （进贡 / 还贡 / 抗贡） =================
+   Decided by the previous hand's finishing order:
+   - 末游 (4th) gives their biggest card to 头游 (1st).
+   - If the losing team took both 3rd and 4th （双下）, 三游 also gives
+     their biggest card to 二游 — both losers 上供.
+   - 抗贡： the givers hold a pair of big jokers between them — one
+     player holding both, or (double tribute) one each — nobody gives.
+   - The tribute card is the giver's biggest card EXCLUDING the heart
+     level card （逢人配 never has to be given away).
+   - The receiver returns a card of 10 or below （还贡）.
+   - After the exchange the main giver （末游） leads the first trick;
+     on 抗贡 the 头游 leads as usual. */
+function computeTributePlan(order){
+  var first = order[0], second = order[1], third = order[2], fourth = order[3];
+  if (teamOf(first) === teamOf(second))
+    return { double: true, pairs: [{ from: fourth, to: first }, { from: third, to: second }] };
+  return { double: false, pairs: [{ from: fourth, to: first }] };
+}
+function countBigJokers(hand){
+  return hand.filter(function(c){ return c.joker === 2; }).length;
+}
+function pickTributeCard(hand){
+  var cands = hand.filter(function(c){ return !isWild(c); });
+  if (!cands.length) cands = hand.slice();
+  var best = cands[0];
+  cands.forEach(function(c){ if (cardPower(c) > cardPower(best)) best = c; });
+  return best;
+}
+function isReturnEligible(c, hand){
+  var base = function(x){ return !x.joker && !isWild(x) && x.rank !== levelRank && x.rank <= 10; };
+  if (hand.some(base)) return base(c);
+  // no small card at all (practically impossible with 28 cards): fall
+  // back to any ordinary card so the exchange can still complete
+  return !c.joker && !isWild(c);
+}
+function pickReturnCard(hand){
+  var elig = hand.filter(function(c){ return isReturnEligible(c, hand); });
+  if (!elig.length) elig = hand.slice();
+  var best = elig[0];
+  elig.forEach(function(c){ if (cardPower(c) < cardPower(best)) best = c; });
+  return best;
+}
+function cardNameHtml(c){
+  if (c.joker) return c.joker === 2 ? "大王" : "小王";
+  return SUITS[c.suit] + " " + RANK_LABEL[c.rank];
+}
+function beginTribute(plan){
+  // 抗贡 check: a pair of big jokers among the giver(s) cancels it all
+  var bigTotal = 0, pairHolder = -1;
+  plan.pairs.forEach(function(pr){
+    var n = countBigJokers(players[pr.from].hand);
+    bigTotal += n;
+    if (n >= 2) pairHolder = pr.from;
+  });
+  if (bigTotal >= 2){
+    if (pairHolder >= 0){
+      tributeAntiNote = "抗贡！<b>" + escapeHtml(players[pairHolder].name) + "</b> 手握两张大王，凑成一对大王，本局不用上供。";
+    } else {
+      var givers = plan.pairs.map(function(pr){ return "<b>" + escapeHtml(players[pr.from].name) + "</b>"; }).join("和");
+      tributeAntiNote = "抗贡！" + givers + " 各有一张大王，合起来一对大王，本局不用上供。";
+    }
+    return false; // normal start, 头游 leads
+  }
+  tributeState = { leader: plan.pairs[0].from, exchanges: [] };
+  plan.pairs.forEach(function(pr){
+    var giver = players[pr.from];
+    var card = pickTributeCard(giver.hand);
+    giver.hand = giver.hand.filter(function(c){ return c.id !== card.id; });
+    var recv = players[pr.to];
+    recv.hand.push(card);
+    sortHand(recv.hand);
+    tributeState.exchanges.push({ from: pr.from, to: pr.to, give: card, ret: null, done: false });
+  });
+  // robot receivers hand their 还贡 back right away; human receivers
+  // pick theirs (host/solo locally, guests through the host)
+  tributeState.exchanges.forEach(function(ex){
+    if (players[ex.to].isBot) doReturn(ex, pickReturnCard(players[ex.to].hand));
+  });
+  if (tributeState.exchanges.every(function(e){ return e.done; })){
+    finishTribute();
+    return true;
+  }
+  tributeActive = true;
+  handActive = false;
+  var parts = tributeState.exchanges.map(function(ex){
+    return "<b>" + escapeHtml(players[ex.from].name) + "</b> 进贡 " + cardNameHtml(ex.give) + " 给 <b>" + escapeHtml(players[ex.to].name) + "</b>";
+  });
+  setLog("上供：" + parts.join("；") + "。等收贡的人还一张 10 及以下的小牌，还完由进贡的 <b>" + escapeHtml(players[tributeState.leader].name) + "</b> 先出牌。");
+  return true;
+}
+function doReturn(ex, card){
+  var recv = players[ex.to];
+  recv.hand = recv.hand.filter(function(c){ return c.id !== card.id; });
+  var giver = players[ex.from];
+  giver.hand.push(card);
+  sortHand(giver.hand);
+  ex.ret = card;
+  ex.done = true;
+}
+function applyReturn(seat, cardId){
+  if (!tributeActive || !tributeState) return false;
+  var ex = null;
+  tributeState.exchanges.forEach(function(e){ if (e.to === seat && !e.done) ex = e; });
+  if (!ex) return false;
+  var recv = players[seat];
+  var card = null;
+  recv.hand.forEach(function(c){ if (c.id === cardId) card = c; });
+  if (!card || !isReturnEligible(card, recv.hand)) return false;
+  doReturn(ex, card);
+  if (seat === viewSeat) selected = {};
+  if (tributeState.exchanges.every(function(e){ return e.done; })) finishTribute();
+  else render();
+  return true;
+}
+function finishTribute(){
+  tributeActive = false;
+  firstLeader = tributeState.leader;
+  turn = firstLeader;
+  starterSeat = firstLeader;
+  handActive = true;
+  var parts = tributeState.exchanges.map(function(ex){
+    return "<b>" + escapeHtml(players[ex.from].name) + "</b> 进贡 " + cardNameHtml(ex.give) + " 给 <b>" + escapeHtml(players[ex.to].name) + "</b>，还回 " + cardNameHtml(ex.ret);
+  });
+  setLog("进贡完成：" + parts.join("；") + "。本局打 <b>" + RANK_LABEL[levelRank] + "</b>，由进贡的 <b>" + escapeHtml(players[turn].name) + "</b> 先出牌（座位上有「先出」标记）。");
+  startTurn(true);
+}
+function myReturnExchange(){
+  if (!tributeActive || !tributeState) return null;
+  var found = null;
+  tributeState.exchanges.forEach(function(e){ if (e.to === viewSeat && !e.done) found = e; });
+  return found;
 }
 
 function respondersNeeded(){
@@ -819,6 +1001,19 @@ function endHand(){
   teamLevel[headTeam] = Math.min(14, newLevel);
   levelRank = teamLevel[headTeam];
   firstLeader = head;
+  pendingTributePlan = matchWin ? null : computeTributePlan(finishOrder);
+  var tributeNote = "";
+  if (pendingTributePlan){
+    var nm = function(s){ return players[s].name; };
+    if (pendingTributePlan.double){
+      tributeNote = "下一局双上供：末游 " + nm(finishOrder[3]) + " 进贡给头游 " + nm(finishOrder[0]) +
+        "，三游 " + nm(finishOrder[2]) + " 进贡给二游 " + nm(finishOrder[1]) +
+        "（进贡方凑齐一对大王可抗贡）。";
+    } else {
+      tributeNote = "下一局末游 " + nm(finishOrder[3]) + " 进贡最大的牌给头游 " + nm(finishOrder[0]) +
+        "（凑齐一对大王可抗贡）。";
+    }
+  }
   lastEndInfo = {
     order: finishOrder.slice(),
     names: finishOrder.map(function(s){ return players[s].name; }),
@@ -827,7 +1022,8 @@ function endHand(){
     levelLabel: RANK_LABEL[teamLevel[headTeam]],
     nextLabel: RANK_LABEL[levelRank],
     headName: players[head].name,
-    matchWin: matchWin
+    matchWin: matchWin,
+    tributeNote: tributeNote
   };
   render();
   showEndOverlay(lastEndInfo, false);
@@ -843,7 +1039,8 @@ function endHtml(info){
     (info.doubleDown ? "双下！" : "") + "升 <b>" + info.gain + "</b> 级：从打 <b>" + (info.prevLabel || "") + "</b> 升级到打 <b>" + info.levelLabel + "</b>。</p>" +
     (info.matchWin
       ? "<p class='big'>打过 A，" + teamName + "赢下整场！</p>"
-      : "<p>下一局打 <b>" + info.nextLabel + "</b> —— " + info.nextLabel + " 是级牌（比 A 还大），由头游 <b>" + escapeHtml(info.headName) + "</b> 先出牌。</p>");
+      : "<p>下一局打 <b>" + info.nextLabel + "</b> —— " + info.nextLabel + " 是级牌（比 A 还大），由头游 <b>" + escapeHtml(info.headName) + "</b> 先出牌。</p>") +
+    (info.tributeNote ? "<p>" + escapeHtml(info.tributeNote) + "</p>" : "");
 }
 function showEndOverlay(info, waitForHost){
   document.getElementById("endBody").innerHTML = endHtml(info);
@@ -858,7 +1055,7 @@ function showEndOverlay(info, waitForHost){
     btn.disabled = false;
     btn.onclick = function(){
       document.getElementById("endOverlay").classList.remove("show");
-      if (info.matchWin){ teamLevel = [2, 2]; levelRank = 2; firstLeader = 0; }
+      if (info.matchWin){ teamLevel = [2, 2]; levelRank = 2; firstLeader = 0; pendingTributePlan = null; }
       newHand();
     };
   }
@@ -958,7 +1155,14 @@ function render(){
   }
   var atHandStart = handActive && !currentPlay && !Object.keys(lastPlays).length &&
     players.length === 4 && players.every(function(p){ return p.hand.length === 27; });
-  if (atHandStart){
+  if (tributeActive && tributeState){
+    var tParts = tributeState.exchanges.map(function(ex){
+      return escapeHtml(players[ex.from].name) + " 进贡 " + cardNameHtml(ex.give) + " 给 " + escapeHtml(players[ex.to].name) +
+        (ex.done ? "，已还 " + cardNameHtml(ex.ret) : "，等 " + escapeHtml(players[ex.to].name) + " 还贡");
+    });
+    $("centerNote").innerHTML = "进贡环节<br />" + tParts.join("<br />");
+    $("centerNote").classList.add("big");
+  } else if (atHandStart){
     $("centerNote").innerHTML = "本局打 <b>" + RANK_LABEL[levelRank] + "</b>（" + RANK_LABEL[levelRank] + " 是级牌）<br />由 <b>" + escapeHtml(players[starterSeat].name) + "</b> 先出牌";
     $("centerNote").classList.add("big");
   } else if (handActive){
@@ -977,7 +1181,81 @@ function render(){
     $("centerNote").textContent = "";
   }
   renderHand();
+  renderTribute();
   if (netRole === "host") broadcastState();
+}
+/* The tribute bar: shows every exchange (the given card is public),
+   whose 还贡 is still owed, and — when the local player owes one — the
+   confirm button for the small card they picked in their hand. */
+function renderTribute(){
+  var bar = $("tributeBar");
+  if (!tributeActive || !tributeState || players.length !== 4){
+    bar.classList.remove("show");
+    bar.innerHTML = "";
+    return;
+  }
+  bar.innerHTML = "";
+  var h = document.createElement("h3");
+  h.textContent = tributeState.exchanges.length > 1 ? "进贡 · 双上供" : "进贡";
+  bar.appendChild(h);
+  tributeState.exchanges.forEach(function(ex){
+    var line = document.createElement("div");
+    line.className = "exline";
+    var txt = document.createElement("span");
+    txt.innerHTML = "<b>" + escapeHtml(players[ex.from].name) + "</b> 进贡";
+    line.appendChild(txt);
+    var row = document.createElement("span");
+    row.className = "cardsrow";
+    row.appendChild(cardEl(ex.give, true));
+    line.appendChild(row);
+    var txt2 = document.createElement("span");
+    txt2.innerHTML = "给 <b>" + escapeHtml(players[ex.to].name) + "</b>";
+    line.appendChild(txt2);
+    if (ex.done){
+      var txt3 = document.createElement("span");
+      txt3.innerHTML = "，已还回";
+      line.appendChild(txt3);
+      var row2 = document.createElement("span");
+      row2.className = "cardsrow";
+      row2.appendChild(cardEl(ex.ret, true));
+      line.appendChild(row2);
+    } else {
+      var wait = document.createElement("span");
+      wait.className = "wait";
+      wait.textContent = "，等 " + players[ex.to].name + " 还一张 10 及以下的小牌";
+      line.appendChild(wait);
+    }
+    bar.appendChild(line);
+  });
+  var myEx = myReturnExchange();
+  if (myEx){
+    var box = document.createElement("div");
+    box.className = "myturn";
+    var label = document.createElement("span");
+    label.innerHTML = "轮到你还贡：在下面手牌里点一张 <b>10 及以下</b>的小牌（大小王、级牌、逢人配不能还），再点右边按钮。";
+    box.appendChild(label);
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn primary";
+    btn.textContent = "还这张给 " + players[myEx.from].name;
+    var sel = selectedCards();
+    btn.disabled = !(sel.length === 1 && isReturnEligible(sel[0], players[viewSeat].hand));
+    btn.addEventListener("click", function(){
+      var s = selectedCards();
+      if (s.length !== 1) return;
+      if (netRole === "guest"){
+        sendToHost({ type: "tributeReturn", id: s[0].id });
+        selected = {};
+        renderHand();
+        renderTribute();
+        return;
+      }
+      applyReturn(viewSeat, s[0].id);
+    });
+    box.appendChild(btn);
+    bar.appendChild(box);
+  }
+  bar.classList.add("show");
 }
 function currentHumanTurn(){
   return handActive && players[turn] && !players[turn].isBot && turn === viewSeat &&
@@ -989,9 +1267,11 @@ function renderHand(){
   handEl.innerHTML = "";
   var p = players[viewSeat];
   if (!p){ $("handWho").textContent = ""; return; }
-  var mine = currentHumanTurn() && viewSeat === turn;
+  var myRet = myReturnExchange();
+  var mine = currentHumanTurn() || !!myRet;
   $("handWho").textContent = (mode === "solo" ? "你的手牌" : p.name + " 的手牌") +
-    (handActive ? (turn === viewSeat ? "（出牌中）" : "（等 " + players[turn].name + " 出牌）") : "");
+    (tributeActive ? (myRet ? "（请你还贡）" : "（进贡环节）")
+      : handActive ? (turn === viewSeat ? "（出牌中）" : "（等 " + players[turn].name + " 出牌）") : "");
   if (!handActive && mode === "online" && !gameStarted){
     handEl.innerHTML = "<span class='hand-empty'>还没开局，开局后这里会显示你的手牌。</span>";
   } else if (p.finished){
@@ -1004,6 +1284,19 @@ function renderHand(){
       if (!mine) el.className += " dim";
       el.addEventListener("click", function(){
         if (justDragged) return; // this click was the end of a drag, not a select
+        var myEx = myReturnExchange();
+        if (myEx){
+          // 还贡 pick: exactly one small card (10 or below)
+          if (!isReturnEligible(c, p.hand)){
+            setLog("还贡只能还 10 及以下的小牌（大小王、级牌和逢人配都不能还），换一张小一点的。");
+            return;
+          }
+          selected = {};
+          selected[c.id] = true;
+          renderHand();
+          renderTribute();
+          return;
+        }
         if (!currentHumanTurn() || viewSeat !== turn) return;
         if (selected[c.id]) delete selected[c.id]; else selected[c.id] = true;
         renderHand();
@@ -1153,6 +1446,19 @@ function selectedCards(){
 }
 function updateComboLabel(){
   var el = $("comboLabel");
+  if (tributeActive){
+    var myEx = myReturnExchange();
+    if (myEx){
+      var sel = selectedCards();
+      el.textContent = sel.length === 1
+        ? "还贡：" + cardNameHtml(sel[0]) + " → " + players[myEx.from].name
+        : "还贡：选一张 10 及以下的小牌";
+    } else {
+      el.textContent = "进贡环节";
+    }
+    el.className = "combo";
+    return;
+  }
   var cards = selectedCards();
   if (!cards.length){ el.textContent = ""; el.className = "combo"; return; }
   var combo = analyze(cards);
@@ -1535,6 +1841,11 @@ function onGuestConnection(conn){
     if (d.type === "action" && assigned){
       onGuestAction(assigned, d);
     }
+    if (d.type === "tributeReturn" && assigned){
+      // a guest who received tribute picks their 还贡 card; the host
+      // validates it (their exchange, their card, 10 or below)
+      applyReturn(assigned, d.id);
+    }
     if (d.type === "sort" && assigned){
       onGuestSort(assigned, d.order);
     }
@@ -1568,6 +1879,18 @@ function onGuestGone(seat, conn){
     players[seat].name = name + "（机器人代打）";
   }
   setLog("<b>" + escapeHtml(name) + "</b> 掉线了，这个位置由机器人代打。");
+  if (tributeActive && tributeState){
+    // the dropped player still owed a 还贡： the robot returns a small
+    // card for them so the tribute phase cannot stall forever
+    tributeState.exchanges.forEach(function(ex){
+      if (ex.to === seat && !ex.done) doReturn(ex, pickReturnCard(players[seat].hand));
+    });
+    if (tributeState.exchanges.every(function(e){ return e.done; })){
+      finishTribute();
+      renderLobby();
+      return;
+    }
+  }
   renderLobby();
   render();
   if (handActive && turn === seat && players[seat].isBot){
@@ -1643,7 +1966,14 @@ function snapshotFor(gseat){
     mySeat: gseat,
     myHand: gameStarted && players[gseat] ? players[gseat].hand : [],
     log: lastLogHtml,
-    endInfo: lastEndInfo
+    endInfo: lastEndInfo,
+    tributeActive: tributeActive,
+    tribute: tributeState ? {
+      leader: tributeState.leader,
+      exchanges: tributeState.exchanges.map(function(e){
+        return { from: e.from, to: e.to, give: e.give, ret: e.ret, done: e.done };
+      })
+    } : null
   };
 }
 function broadcastState(){
@@ -1856,6 +2186,13 @@ function applySnapshot(s){
   }
   turn = (s.turn - my + 4) % 4;
   starterSeat = (typeof s.firstLeader === "number" ? (s.firstLeader - my + 4) % 4 : turn);
+  tributeActive = !!s.tributeActive;
+  tributeState = s.tribute ? {
+    leader: (s.tribute.leader - my + 4) % 4,
+    exchanges: s.tribute.exchanges.map(function(e){
+      return { from: (e.from - my + 4) % 4, to: (e.to - my + 4) % 4, give: e.give, ret: e.ret, done: e.done };
+    })
+  } : null;
   currentPlay = s.currentPlay
     ? { seat: (s.currentPlay.seat - my + 4) % 4, cards: s.currentPlay.cards, combo: s.currentPlay.combo }
     : null;
@@ -1909,6 +2246,9 @@ function leaveRoom(silent){
   $("startBtn").style.display = "";
   $("endOverlay").classList.remove("show");
   handActive = false;
+  tributeActive = false;
+  tributeState = null;
+  pendingTributePlan = null;
   placeholderPlayers();
   render();
   if (!silent) netStatus("已离开房间。可以重新创建一个，或输入房间码加入朋友的房间。");
