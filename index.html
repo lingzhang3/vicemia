@@ -526,7 +526,11 @@ function analyze(cards){
     var suits = {};
     nw.forEach(function(x){ suits[x.suit] = true; });
     var suitKeys = Object.keys(suits);
-    if (suitKeys.length === 1 && (w === 0 || suitKeys[0] === "1"))
+    // The wild card stands in as a card of the run's own suit, whatever
+    // that suit is — a spade/club/diamond run completed by the heart
+    // level card is still a straight flush. (Requiring the natural
+    // cards to be hearts made wild-made off-suit flushes unplayable.)
+    if (suitKeys.length === 1)
       return { type:"straightflush", len:n, mainKey:st.top, bombScore:550 + st.top, label:"同花顺" };
   }
   // full house: 5 cards, trio + pair
@@ -619,6 +623,29 @@ function genCombos(hand){
   function seqGen(mult, minL, maxL, flushOnly){
     for (var L = minL; L <= maxL; L++){
       for (var s = 1; s + L - 1 <= 14; s++){
+        if (flushOnly){
+          // Build the run suit by suit: at each rank take a card OF THE
+          // TARGET SUIT when the hand has one. (Taking the first card of
+          // each rank regardless of suit — the old way — grabbed an
+          // off-suit duplicate and the flush was never generated, so the
+          // hint and the bots missed wild-made straight flushes even
+          // though analyze() accepts them when a human selects them.)
+          // The wild fills ranks the target suit lacks, as that suit.
+          for (var su = 0; su < 4; su++){
+            var fpicks = [], fdef = 0;
+            for (var ff = s; ff < s + L; ff++){
+              var fface = ff === 1 ? 14 : ff;
+              var fg = (faceCards[fface] || []).filter(function(c){ return c.suit === su; });
+              var ftake = Math.min(fg.length, mult);
+              for (var ft = 0; ft < ftake; ft++) fpicks.push(fg[ft]);
+              fdef += mult - ftake;
+            }
+            if (fdef > wilds.length || !fpicks.length) continue;
+            var fsel = fpicks.concat(wilds.slice(0, fdef));
+            if (fsel.length === L * mult) add(fsel);
+          }
+          continue;
+        }
         var picks = [], deficit = 0, ok = true;
         for (var f = s; f < s + L; f++){
           var face = f === 1 ? 14 : f;
@@ -630,12 +657,6 @@ function genCombos(hand){
         if (deficit > wilds.length) { ok = false; }
         if (!ok) continue;
         var sel = picks.concat(wilds.slice(0, deficit));
-        if (flushOnly){
-          var ss = {}; picks.forEach(function(c){ ss[c.suit] = true; });
-          if (Object.keys(ss).length !== 1) continue;
-          if (deficit > 0 && !picks.length) continue;
-          if (deficit > 0 && Object.keys(ss)[0] !== "1") continue;
-        }
         if (sel.length === L * mult) add(sel);
       }
     }
